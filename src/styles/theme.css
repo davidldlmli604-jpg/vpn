@@ -1,0 +1,82 @@
+/* Три набора оформления × тёмная и светлая тема. Всё остальное оформление берёт цвета только отсюда. */
+
+:root {
+  --font: 'Manrope Variable', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --r-xl: 28px;
+  --r-lg: 20px;
+  --r-md: 14px;
+  --r-sm: 10px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ok: #3de0a0;
+  --warn: #ffc860;
+  --danger: #ff6b86;
+  color-scheme: dark;
+}
+
+/* ---------- Сияние (бирюза + фиолет) ---------- */
+[data-palette='aurora'][data-theme='dark'] {
+  --bg0: #070b19; --bg1: #0d1431;
+  --text: #eef2ff; --muted: #9aa6cf; --faint: #66719a;
+  --surface: rgba(255, 255, 255, 0.05); --surface-2: rgba(255, 255, 255, 0.085); --border: rgba(255, 255, 255, 0.095);
+  --accent: #35f0cf; --accent-2: #8b7bff; --accent-ink: #03211d;
+  --aura-a: rgba(53, 240, 207, 0.20); --aura-b: rgba(139, 123, 255, 0.24); --aura-c: rgba(63, 214, 255, 0.12);
+  --shadow: 0 18px 50px rgba(2, 6, 20, 0.55);
+}
+[data-palette='aurora'][data-theme='light'] {
+  --bg0: #eef3fb; --bg1: #dfe8f8;
+  --text: #121936; --muted: #55608c; --faint: #8993b6;
+  --surface: rgba(255, 255, 255, 0.72); --surface-2: rgba(255, 255, 255, 0.92); --border: rgba(40, 60, 120, 0.12);
+  --accent: #0a9d88; --accent-2: #6a5ce6; --accent-ink: #ffffff;
+  --aura-a: rgba(20, 200, 175, 0.22); --aura-b: rgba(120, 100, 240, 0.22); --aura-c: rgba(60, 170, 255, 0.16);
+  --shadow: 0 16px 40px rgba(40, 60, 130, 0.16);
+  --ok: #12a870; --warn: #c98100; --danger: #e0385a;
+  color-scheme: light;
+}
+
+/* ---------- Закат (коралл + малиновый) ---------- */
+[data-palette='sunset'][data-theme='dark'] {
+  --bg0: #140a12; --bg1: #26111b;
+  --text: #fff1ec; --muted: #d0a4a8; --faint: #94696f;
+  --surface: rgba(255, 255, 255, 0.05); --surface-2: rgba(255, 255, 255, 0.088); --border: rgba(255, 220, 210, 0.11);
+  --accent: #ff9a62; --accent-2: #ff4d8d; --accent-ink: #2a0f05;
+  --aura-a: rgba(255, 140, 80, 0.20); --aura-b: rgba(255, 70, 140, 0.22); --aura-c: rgba(255, 200, 90, 0.12);
+  --shadow: 0 18px 50px rgba(20, 4, 10, 0.6);
+}
+[data-palette='sunset'][data-theme='light'] {
+  --bg0: #fff5ef; --bg1: #ffe7da;
+  --text: #2b1520; --muted: #8a5a63; --faint: #b5868e;
+  --surface: rgba(255, 255, 255, 0.78); --surface-2: rgba(255, 255, 255, 0.95); --border: rgba(160, 70, 60, 0.15);
+  --accent: #e5532b; --accent-2: #d42f78; --accent-ink: #ffffff;
+  --aura-a: rgba(255, 130, 70, 0.26); --aura-b: rgba(240, 70, 130, 0.2); --aura-c: rgba(255, 190, 80, 0.2);
+  --shadow: 0 16px 40px rgba(150, 60, 50, 0.16);
+  --ok: #109b64; --warn: #c27a00; --danger: #d82a4e;
+  color-scheme: light;
+}
+
+/* ---------- Хвоя (изумруд + золото) ---------- */
+[data-palette='forest'][data-theme='dark'] {
+  --bg0: #06130e; --bg1: #0b2119;
+  --text: #ecfbf2; --muted: #98c2ac; --faint: #5f8b76;
+  --surface: rgba(255, 255, 255, 0.05); --surface-2: rgba(255, 255, 255, 0.085); --border: rgba(200, 255, 225, 0.10);
+  --accent: #4be59b; --accent-2: #e8c85a; --accent-ink: #032115;
+  --aura-a: rgba(75, 229, 155, 0.19); --aura-b: rgba(232, 200, 90, 0.14); --aura-c: rgba(60, 200, 190, 0.14);
+  --shadow: 0 18px 50px rgba(1, 12, 7, 0.6);
+}
+[data-palette='forest'][data-theme='light'] {
+  --bg0: #eff8f2; --bg1: #dcefe3;
+  --text: #0e2a1e; --muted: #4f7562; --faint: #86a897;
+  --surface: rgba(255, 255, 255, 0.76); --surface-2: rgba(255, 255, 255, 0.95); --border: rgba(20, 100, 60, 0.14);
+  --accent: #14915a; --accent-2: #b08508; --accent-ink: #ffffff;
+  --aura-a: rgba(40, 190, 120, 0.22); --aura-b: rgba(220, 180, 60, 0.2); --aura-c: rgba(50, 180, 170, 0.16);
+  --shadow: 0 16px 40px rgba(20, 90, 55, 0.15);
+  --ok: #0f9a62; --warn: #b87800; --danger: #d8304f;
+  color-scheme: light;
+}
+
+/* ---------- Цвета состояний большой кнопки (меняются вместе со статусом) ---------- */
+[data-state='off'] { --st-a: color-mix(in srgb, var(--muted) 70%, transparent); --st-b: color-mix(in srgb, var(--faint) 60%, transparent); --st-glow: color-mix(in srgb, var(--accent-2) 25%, transparent); }
+[data-state='connecting'] { --st-a: var(--warn); --st-b: color-mix(in srgb, var(--warn) 55%, var(--accent-2)); --st-glow: color-mix(in srgb, var(--warn) 45%, transparent); }
+[data-state='disconnecting'] { --st-a: var(--muted); --st-b: var(--faint); --st-glow: color-mix(in srgb, var(--muted) 30%, transparent); }
+[data-state='on'] { --st-a: var(--accent); --st-b: var(--accent-2); --st-glow: color-mix(in srgb, var(--accent) 55%, transparent); }
+[data-state='error'] { --st-a: var(--danger); --st-b: color-mix(in srgb, var(--danger) 60%, var(--accent-2)); --st-glow: color-mix(in srgb, var(--danger) 45%, transparent); }

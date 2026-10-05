@@ -6,5 +6,3 @@ bin/
 *.log
 .DS_Store
 .tmp/
-screenshots/*.png
-!screenshots/README.md

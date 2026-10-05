@@ -14,7 +14,8 @@
     "types": ["vite/client"],
     "paths": {
       "@core/*": ["./core/*"],
-      "@shared/*": ["./shared/*"]
+      "@shared/*": ["./shared/*"],
+      "@brand": ["./brand.json"]
     }
   },
   "include": ["src", "shared", "core", "brand.json", "vite.config.ts"]
