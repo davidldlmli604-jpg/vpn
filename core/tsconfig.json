@@ -1,0 +1,23 @@
+{
+  "_comment": "Проверка, что core не зависит ни от Node, ни от браузера, ни от Electron: подключены только стандартные средства языка.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": [],
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true
+  },
+  "include": [
+    "./**/*.ts"
+  ],
+  "exclude": [
+    "./**/*.test.ts"
+  ]
+}

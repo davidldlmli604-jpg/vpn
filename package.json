@@ -1,0 +1,47 @@
+{
+  "name": "tropa",
+  "productName": "Тропа",
+  "version": "0.1.0",
+  "description": "Простой VPN-клиент для Windows: вставил ключ — нажал кнопку.",
+  "private": true,
+  "main": "dist-electron/main.js",
+  "author": "Гоша",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "ui": "vite --config vite.config.ts --mode mock --port 5174",
+    "build:main": "node scripts/build-main.mjs",
+    "build:ui": "vite build --config vite.config.ts",
+    "build": "npm run typecheck && npm run build:ui && npm run build:main",
+    "start": "electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "fetch:singbox": "node scripts/fetch-singbox.mjs",
+    "fetch:rules": "node scripts/fetch-rules.mjs",
+    "dist": "npm run build && node scripts/fetch-singbox.mjs --target win32-x64 && electron-builder --win --x64 --config electron-builder.config.cjs",
+    "screenshots": "node scripts/screenshots.mjs"
+  },
+  "dependencies": {
+    "flag-icons": "^7.5.0",
+    "framer-motion": "^12.43.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.17.0",
+    "esbuild": "^0.25.0",
+    "playwright-core": "^1.55.0",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.6",
+    "vitest": "^3.2.7"
+  }
+}

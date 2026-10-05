@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-electron/
+release/
+bin/
+*.log
+.DS_Store
+.tmp/
+screenshots/*.png
+!screenshots/README.md

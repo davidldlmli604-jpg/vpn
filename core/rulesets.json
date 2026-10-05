@@ -1,0 +1,40 @@
+{
+  "_comment": "Наборы правил для российских сайтов. Файлы .srs — готовые списки проекта SagerNet (sing-geosite / sing-geoip). Роль direct — открывать напрямую, vpn — всегда через VPN (заблокированные в РФ СМИ: их нельзя пускать напрямую, даже если домен .ru).",
+  "baseUrl": {
+    "geosite": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/",
+    "geoip": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/"
+  },
+  "sets": [
+    { "file": "geosite-category-ru.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-yandex.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-vk.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-mailru.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-ok.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-dzen.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-rutube.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-ozon.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-wildberries.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-avito.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-sber.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-mts-ru.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-megafon.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-rostelecom.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-kinopoisk.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-okko.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-2gis.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-kaspersky.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-category-gov-ru.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-category-bank-ru.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-category-ecommerce-ru.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-category-retail-ru.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-category-media-ru.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-category-entertainment-ru.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-category-travel-ru.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-category-education-ru.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-category-medicine-ru.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-category-tech-media-ru.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geosite-category-forums-ru.srs", "kind": "geosite", "role": "direct" },
+    { "file": "geoip-ru.srs", "kind": "geoip", "role": "direct-ip" },
+    { "file": "geosite-category-media-ru-blocked.srs", "kind": "geosite", "role": "vpn" }
+  ]
+}
