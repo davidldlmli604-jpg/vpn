@@ -18,8 +18,6 @@ function Latency({ v }: { v: ServerView['latency'] }): ReactElement | null {
 }
 
 function ServerCard({ s, selected, active, subName, onAskDelete, onQr }: { s: ServerView; selected: boolean; active: boolean; subName: string | null; onAskDelete: (s: ServerView) => void; onQr: (t: QrTarget) => void }): ReactElement {
-  // на телефоне проверка задержки — в следующем этапе: кнопку не показываем
-  const canPing = useApp((st) => st.app?.system.platform !== 'android')
   const [menu, setMenu] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [name, setName] = useState(s.name)
@@ -78,9 +76,9 @@ function ServerCard({ s, selected, active, subName, onAskDelete, onQr }: { s: Se
         <button className="icon-btn star" data-hint="Звёздочка: любимые серверы поднимаются в начало списка." data-on={s.favorite} aria-label={s.favorite ? 'Убрать из любимых' : 'В любимые'} onClick={() => void vpn().toggleFavorite(s.id)}>
           <motion.span whileTap={{ scale: 1.5, rotate: 20 }} style={{ display: 'grid' }}><Icon name="star" fill={s.favorite ? 'currentColor' : 'none'} /></motion.span>
         </button>
-        {canPing && <button className="icon-btn" data-hint="Проверить задержку только этого сервера: покажет, насколько быстро он отвечает." aria-label="Проверить задержку" disabled={s.latency === 'testing'} onClick={() => void vpn().pingServers([s.id])}>
+        <button className="icon-btn" data-hint="Проверить задержку только этого сервера: покажет, насколько быстро он отвечает." aria-label="Проверить задержку" disabled={s.latency === 'testing'} onClick={() => void vpn().pingServers([s.id])}>
           {s.latency === 'testing' ? <span className="spinner" style={{ width: 15, height: 15 }} /> : <Icon name="bolt" size={18} />}
-        </button>}
+        </button>
         <span className="tech server__host">{s.host}</span>
         <div style={{ position: 'relative' }}>
           <button className="icon-btn" aria-label="Действия" data-hint="Дополнительные действия: переименовать сервер или удалить его из списка." onMouseDown={(e) => e.stopPropagation()} onClick={() => setMenu((v) => !v)}><Icon name="more" /></button>
@@ -220,11 +218,10 @@ export function Servers(): ReactElement {
   const setSort = (v: Sort): void => { sortChoice = v; setSortState(v) }
   const { servers, subscriptions, settings, conn } = app
   const testing = servers.some((s) => s.latency === 'testing')
-  const canPing = app.system.platform !== 'android'
 
   // при первом заходе сами проверяем, кто отвечает быстрее — человеку не нужно ничего нажимать
   useEffect(() => {
-    if (!canPing || autoChecked || servers.length === 0 || !servers.some((s) => s.latency === null)) return
+    if (autoChecked || servers.length === 0 || !servers.some((s) => s.latency === null)) return
     autoChecked = true
     void vpn().pingServers()
   }, [servers])
@@ -235,7 +232,7 @@ export function Servers(): ReactElement {
       const r = await vpn().pasteKey()
       pushToast({ kind: r.ok ? 'success' : 'error', text: r.message })
       for (const sk of r.skipped.slice(0, 2)) pushToast({ kind: 'warn', text: sk })
-      if (r.ok && r.kind === 'servers' && canPing) void vpn().pingServers()
+      if (r.ok && r.kind === 'servers') void vpn().pingServers()
     } finally { setBusy(false) }
   }
 
@@ -281,13 +278,13 @@ export function Servers(): ReactElement {
         <section className="section">
           <div className="toolbar">
             <h2 className="section__title" style={{ flex: 1 }}>Серверы · {servers.length}</h2>
-            {canPing && <><Chips label="Порядок серверов" value={sort} onChange={setSort} items={[
+            <Chips label="Порядок серверов" value={sort} onChange={setSort} items={[
               { value: 'added', title: 'Как добавлены', hint: 'Серверы идут в том порядке, в котором вы их добавляли. Любимые всегда сверху.' },
               { value: 'speed', title: 'Быстрые сверху', icon: 'bolt', hint: 'Серверы с самой маленькой задержкой — сверху. Сначала нажмите «Проверить задержку». Любимые всегда сверху.' }
             ]} />
             <button className="btn btn--ghost btn--sm" disabled={testing} data-hint="Проверяет, насколько быстро отвечает каждый сервер. Занимает несколько секунд, интернет при этом не мешает." onClick={() => void vpn().pingServers()}>
               {testing ? <span className="spinner" style={{ width: 14, height: 14 }} /> : <Icon name="bolt" size={16} />} Проверить задержку
-            </button></>}
+            </button>
           </div>
           <LayoutGroup>
             <motion.div className="servers" layout>

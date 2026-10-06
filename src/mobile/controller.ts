@@ -314,25 +314,54 @@ class MobileController implements VpnApi {
     this.store.toggleFavorite(id)
     this.push()
   }
-  async pingServers(): Promise<void> { /* список серверов на телефоне — в следующих версиях */ }
+  /**
+   * Задержка серверов: время установки соединения с сервером. Для серверов на UDP (Hysteria2, TUIC) так не
+   * измерить — у них отметки просто нет.
+   */
+  async pingServers(ids?: string[]): Promise<void> {
+    const targets = this.store.servers.filter((x) => !ids || ids.includes(x.id))
+    for (const t of targets) this.store.setLatency(t.id, 'testing')
+    this.push()
+    let i = 0
+    const worker = async (): Promise<void> => {
+      while (i < targets.length) {
+        const t = targets[i++]!
+        if (/hysteria|tuic/i.test(t.protocol)) {
+          this.store.setLatency(t.id, null)
+        } else {
+          try {
+            const r = await Tropa.tcpPing({ host: t.host, port: t.port, timeoutMs: 4000 })
+            this.store.setLatency(t.id, typeof r.ms === 'number' ? { ms: Math.max(1, r.ms) } : { error: 'нет ответа' })
+          } catch {
+            this.store.setLatency(t.id, { error: 'нет ответа' })
+          }
+        }
+        this.push()
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(8, targets.length) }, worker))
+  }
 
   // ------------------------------------------------------------------ подписки (логика — как в Windows-версии)
 
-  /** Загрузка подписки средствами Android (запрос идёт мимо ограничений WebView). */
+  /** Загрузка подписки средствами Android (не WebView: без ограничений браузера, работают и http-ссылки). */
   private async fetchSub(url: string): Promise<SubscriptionFetch> {
     if (!/^https?:\/\//i.test(url)) return subscriptionFailed('bad-url')
-    const ctl = new AbortController()
-    const timer = setTimeout(() => ctl.abort(), 20000)
     try {
-      const r = await fetch(url, { headers: { 'User-Agent': SUBSCRIPTION_USER_AGENT }, cache: 'no-store', signal: ctl.signal })
+      const r = await Tropa.httpGet({ url, userAgent: SUBSCRIPTION_USER_AGENT, timeoutMs: 20000, maxBytes: SUBSCRIPTION_MAX_BYTES })
       if (r.status < 200 || r.status >= 300) return subscriptionFailed('status', r.status)
-      const body = await r.text()
-      if (body.length > SUBSCRIPTION_MAX_BYTES) return subscriptionFailed('too-large')
-      return parseSubscriptionResponse(body, (name) => r.headers.get(name))
+      return parseSubscriptionResponse(r.body, (name) => r.headers[name.toLowerCase()])
     } catch (e) {
-      return subscriptionFailed((e as Error).name === 'AbortError' ? 'timeout' : 'network')
-    } finally {
-      clearTimeout(timer)
+      const err = e as { code?: string; message?: string }
+      this.log(`Подписка: ${err.code ?? ''} ${err.message ?? ''}`)
+      const kind = err.code === 'timeout' || err.code === 'too-large' || err.code === 'bad-url' ? err.code : 'network'
+      const f = subscriptionFailed(kind)
+      // техническая причина — в скобках: по ней видно, что именно случилось (адрес не находится, сертификат, …)
+      if (f.outcome.kind === 'error' && kind === 'network') {
+        const why = err.code === 'dns' ? 'адрес сайта не находится' : err.code === 'tls' ? 'ошибка защищённого соединения' : (err.message ?? '').slice(0, 120)
+        f.outcome.error.message = `${f.outcome.error.message} (${why})`
+      }
+      return f
     }
   }
 

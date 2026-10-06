@@ -23,6 +23,10 @@ export interface TropaNative {
   /** Данные (настройки, ключи), расшифрованные ключом из хранилища Android. null — ещё ничего не сохраняли. */
   loadData(): Promise<{ text: string | null; broken?: boolean }>
   saveData(o: { text: string }): Promise<void>
+  /** Загрузка подписки средствами Android. При ошибке — исключение с code: timeout | dns | tls | cleartext | too-large | bad-url | network. */
+  httpGet(o: { url: string; userAgent: string; timeoutMs: number; maxBytes: number }): Promise<{ status: number; body: string; headers: Record<string, string> }>
+  /** Время установки соединения с сервером, мс (или текст ошибки). */
+  tcpPing(o: { host: string; port: number; timeoutMs: number }): Promise<{ ms?: number; error?: string }>
   readClipboard(): Promise<{ text: string }>
   writeClipboard(o: { text: string }): Promise<void>
   /** Открыть камеру и прочитать QR-код. null — человек закрыл сканер. */

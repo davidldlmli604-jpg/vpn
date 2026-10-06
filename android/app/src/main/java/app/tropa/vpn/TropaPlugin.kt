@@ -86,6 +86,111 @@ class TropaPlugin : Plugin() {
         call.resolve()
     }
 
+    // ---------------------------------------------------------------- сеть: подписка и задержка
+
+    /**
+     * Загрузка подписки средствами Android (не WebView): так нет ограничений браузера, работают и http-ссылки,
+     * а при ошибке понятно, что именно случилось (code: timeout | dns | tls | cleartext | too-large | network).
+     */
+    @PluginMethod
+    fun httpGet(call: PluginCall) {
+        val url = call.getString("url") ?: return call.reject("no url", "bad-url")
+        val ua = call.getString("userAgent") ?: "Tropa"
+        val timeout = call.getInt("timeoutMs") ?: 20000
+        val maxBytes = call.getInt("maxBytes") ?: (6 * 1024 * 1024)
+        Thread fetch@{
+            try {
+                var current = java.net.URL(url)
+                var conn: java.net.HttpURLConnection
+                var hops = 0
+                while (true) {
+                    conn = (current.openConnection() as java.net.HttpURLConnection).apply {
+                        connectTimeout = timeout
+                        readTimeout = timeout
+                        instanceFollowRedirects = false
+                        setRequestProperty("User-Agent", ua)
+                        setRequestProperty("Accept", "*/*")
+                    }
+                    val code = conn.responseCode
+                    if (code in 300..399 && hops < 5) {
+                        val loc = conn.getHeaderField("Location") ?: break
+                        current = java.net.URL(current, loc)
+                        conn.disconnect()
+                        hops++
+                        continue
+                    }
+                    break
+                }
+                val status = conn.responseCode
+                val stream = if (status >= 400) conn.errorStream else conn.inputStream
+                val out = java.io.ByteArrayOutputStream()
+                stream?.use { input ->
+                    val buf = ByteArray(16 * 1024)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                        if (out.size() > maxBytes) {
+                            conn.disconnect()
+                            call.reject("too large", "too-large")
+                            return@fetch
+                        }
+                    }
+                }
+                val headers = JSObject()
+                for ((k, v) in conn.headerFields) if (k != null && v.isNotEmpty()) headers.put(k.lowercase(), v[0])
+                conn.disconnect()
+                val o = JSObject()
+                o.put("status", status)
+                o.put("body", out.toString("UTF-8"))
+                o.put("headers", headers)
+                call.resolve(o)
+            } catch (e: java.net.SocketTimeoutException) {
+                call.reject(e.toString(), "timeout")
+            } catch (e: java.net.UnknownHostException) {
+                call.reject(e.toString(), "dns")
+            } catch (e: javax.net.ssl.SSLException) {
+                call.reject(e.toString(), "tls")
+            } catch (e: java.net.MalformedURLException) {
+                call.reject(e.toString(), "bad-url")
+            } catch (e: Exception) {
+                val code = if (e.toString().contains("Cleartext", ignoreCase = true)) "cleartext" else "network"
+                call.reject(e.toString(), code)
+            }
+        }.start()
+    }
+
+    /**
+     * Задержка до сервера: сколько миллисекунд занимает установка соединения с ним. Пока работает VPN —
+     * через основную сеть телефона (мимо туннеля), чтобы мерить именно путь до сервера.
+     */
+    @PluginMethod
+    fun tcpPing(call: PluginCall) {
+        val host = call.getString("host") ?: return call.reject("no host")
+        val port = call.getInt("port") ?: return call.reject("no port")
+        val timeout = call.getInt("timeoutMs") ?: 4000
+        Thread {
+            val socket = java.net.Socket()
+            try {
+                val network = NetworkMonitor.defaultNetwork
+                val address = if (network != null) {
+                    network.bindSocket(socket)
+                    network.getByName(host)
+                } else {
+                    java.net.InetAddress.getByName(host)
+                }
+                val t0 = System.nanoTime()
+                socket.connect(java.net.InetSocketAddress(address, port), timeout)
+                val ms = (System.nanoTime() - t0) / 1_000_000
+                call.resolve(JSObject().put("ms", ms))
+            } catch (e: Exception) {
+                call.resolve(JSObject().put("error", e.toString()))
+            } finally {
+                runCatching { socket.close() }
+            }
+        }.start()
+    }
+
     // ---------------------------------------------------------------- QR-код
 
     @PluginMethod
