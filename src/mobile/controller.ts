@@ -4,6 +4,8 @@ import { buildSingBoxConfig, parseInput } from '@core/index'
 import type { ToastMessage, VpnApi } from '@shared/api'
 import { DataStore, SecureStorageError, newId, type Sealer, type StoreBackend } from '@shared/dataStore'
 import { EXIT_SERVICES, countryNameRu, parseExit } from '@shared/exit'
+import { parseSubscriptionResponse, subscriptionDue, subscriptionFailed, SUBSCRIPTION_MAX_BYTES, SUBSCRIPTION_USER_AGENT, type SubscriptionFetch } from '@shared/subscriptions'
+import QRCode from 'qrcode'
 import { humanizeEngineLog, noServer } from '@shared/humanErrors'
 import type { AddResult, AppState, ConfigPreview, ConnState, ExitInfo, HumanError, QrResult, RunningApp, Settings, StatsSample } from '@shared/types'
 import { Tropa, type NativeStatusEvent } from './native'
@@ -34,6 +36,10 @@ class MobileController implements VpnApi {
   private latencyAt = 0
   /** Человек сам нажал «выключить» — обрыв не считается ошибкой. */
   private userStopped = false
+  /** Сменили сервер во время работы: после остановки сразу подключаемся заново. */
+  private reconnectAfterStop = false
+  private refreshingSubs = new Set<string>()
+  private lastSubTry = new Map<string, number>()
 
   constructor(private readonly info: { version: string; engineVersion: string; secure: boolean }, savedText: string | null, broken: boolean) {
     let text = savedText
@@ -61,6 +67,9 @@ class MobileController implements VpnApi {
       if (s.status === 'on') this.afterConnected()
     }
     if (this.store.loadNote) setTimeout(() => this.toast('warn', this.store.loadNote!), 800)
+    // подписки обновляются сами по сроку поставщика, пока приложение открыто
+    setTimeout(() => void this.refreshDueSubscriptions(), 5_000)
+    setInterval(() => void this.refreshDueSubscriptions(), 10 * 60_000)
     if (this.store.settings.connectOnLaunch && this.conn.status === 'off' && this.store.settings.selectedServerId) void this.connect()
   }
 
@@ -81,7 +90,7 @@ class MobileController implements VpnApi {
       conn: { ...this.conn },
       exit: { ...this.exit },
       servers: this.store.views(),
-      subscriptions: [],
+      subscriptions: this.store.subscriptionViews(this.refreshingSubs),
       settings: this.store.settings,
       system: {
         platform: 'android',
@@ -134,6 +143,10 @@ class MobileController implements VpnApi {
       this.setConn({ status: 'off', since: null, error: null, serverId: null })
     }
     this.userStopped = false
+    if (this.reconnectAfterStop) {
+      this.reconnectAfterStop = false
+      void this.connect()
+    }
   }
 
   private afterConnected(): void {
@@ -260,7 +273,7 @@ class MobileController implements VpnApi {
   async addKeyText(text: string): Promise<AddResult> {
     const outcome = parseInput(text)
     if (outcome.kind === 'error') return this.fail(outcome.error.message)
-    if (outcome.kind === 'subscription-url') return this.fail('Это ссылка на подписку. Подписки на телефоне появятся в следующей версии — пока добавьте ключ одного сервера.')
+    if (outcome.kind === 'subscription-url') return this.addSubscriptionUrl(outcome.url)
     try {
       const { added, duplicates } = this.store.addServers(outcome.servers)
       const skipped = outcome.failures.map((f) => `${f.hint}: ${f.error.message}`)
@@ -279,8 +292,14 @@ class MobileController implements VpnApi {
 
   async selectServer(id: string): Promise<void> {
     if (!this.store.server(id)) return
+    const changed = this.store.settings.selectedServerId !== id
     this.store.updateSettings({ selectedServerId: id })
     this.push()
+    // VPN работает — переключаемся на новый сервер: выключаем и сразу включаем
+    if (changed && (this.conn.status === 'on' || this.conn.status === 'connecting')) {
+      this.reconnectAfterStop = true
+      await this.disconnect()
+    }
   }
   async renameServer(id: string, name: string): Promise<void> {
     this.store.rename(id, name)
@@ -297,10 +316,140 @@ class MobileController implements VpnApi {
   }
   async pingServers(): Promise<void> { /* список серверов на телефоне — в следующих версиях */ }
 
-  async refreshSubscription(): Promise<{ ok: boolean; message: string }> { return notReady }
-  async renameSubscription(): Promise<void> { /* подписок пока нет */ }
-  async removeSubscription(): Promise<void> { /* подписок пока нет */ }
-  async getQr(): Promise<QrResult> { return { ok: false, message: notReady.message } }
+  // ------------------------------------------------------------------ подписки (логика — как в Windows-версии)
+
+  /** Загрузка подписки средствами Android (запрос идёт мимо ограничений WebView). */
+  private async fetchSub(url: string): Promise<SubscriptionFetch> {
+    if (!/^https?:\/\//i.test(url)) return subscriptionFailed('bad-url')
+    const ctl = new AbortController()
+    const timer = setTimeout(() => ctl.abort(), 20000)
+    try {
+      const r = await fetch(url, { headers: { 'User-Agent': SUBSCRIPTION_USER_AGENT }, cache: 'no-store', signal: ctl.signal })
+      if (r.status < 200 || r.status >= 300) return subscriptionFailed('status', r.status)
+      const body = await r.text()
+      if (body.length > SUBSCRIPTION_MAX_BYTES) return subscriptionFailed('too-large')
+      return parseSubscriptionResponse(body, (name) => r.headers.get(name))
+    } catch (e) {
+      return subscriptionFailed((e as Error).name === 'AbortError' ? 'timeout' : 'network')
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  private async addSubscriptionUrl(url: string): Promise<AddResult> {
+    if (!this.store.secureAvailable) return this.fail('Телефон не дал защитить ссылку шифрованием, поэтому подписка не сохранена. Попробуйте перезапустить программу.')
+    const existing = this.store.subscriptions.find((x) => this.store.openUrl(x) === url)
+    if (existing) {
+      const r = await this.doRefresh(existing.id, false)
+      return { ok: r.ok, added: 0, kind: 'subscription', message: r.ok ? 'Такая подписка уже есть — список серверов обновлён.' : r.message, skipped: [], firstId: null }
+    }
+    this.log('Загружаю подписку')
+    const f = await this.fetchSub(url)
+    if (f.outcome.kind !== 'servers') return this.fail(f.outcome.kind === 'error' ? f.outcome.error.message : 'Подписка пустая.')
+    try {
+      const sub = this.store.addSubscription(url, f.title ?? '')
+      const r = this.store.reconcileSubscription(sub.id, f.outcome.servers)
+      this.store.setSubscriptionResult(sub.id, { error: null, info: f.info, title: f.title, intervalHours: f.intervalHours })
+      const first = this.store.servers.find((x) => x.subscriptionId === sub.id) ?? null
+      const sel = this.store.settings.selectedServerId
+      if (first && (!sel || !this.store.server(sel))) this.store.updateSettings({ selectedServerId: first.id })
+      const skipped = f.outcome.failures.map((x) => `${x.hint}: ${x.error.message}`)
+      this.log(`Подписка добавлена, серверов: ${r.added}`)
+      this.push()
+      const name = this.store.subscription(sub.id)?.name ?? 'Подписка'
+      const base = `Подписка «${name}» добавлена: серверов ${r.added}. Выбрать сервер — во вкладке «Серверы».`
+      return { ok: true, added: r.added, kind: 'subscription', message: skipped.length ? `${base} Не удалось прочитать: ${skipped.length}` : base, skipped, firstId: first?.id ?? null }
+    } catch (e) {
+      if (e instanceof SecureStorageError) return this.fail('Телефон не дал защитить ключи шифрованием, поэтому подписка не сохранена. Попробуйте перезапустить программу.')
+      throw e
+    }
+  }
+
+  private async doRefresh(id: string, silent: boolean): Promise<{ ok: boolean; message: string }> {
+    const rec = this.store.subscription(id)
+    if (!rec) return { ok: false, message: 'Такой подписки нет.' }
+    if (this.refreshingSubs.has(id)) return { ok: true, message: 'Подписка уже обновляется.' }
+    const url = this.store.openUrl(rec)
+    if (!url) return { ok: false, message: 'Не удалось прочитать адрес подписки. Удалите её и добавьте заново.' }
+    this.refreshingSubs.add(id)
+    this.lastSubTry.set(id, Date.now())
+    this.push()
+    try {
+      const f = await this.fetchSub(url)
+      if (f.outcome.kind !== 'servers') {
+        const message = f.outcome.kind === 'error' ? f.outcome.error.message : 'Подписка пустая.'
+        // старые серверы остаются: временный сбой не должен оставлять человека без списка
+        this.store.setSubscriptionResult(id, { error: message })
+        if (!silent) this.toast('warn', message)
+        return { ok: false, message }
+      }
+      const before = this.store.settings.selectedServerId
+      const beforeRec = before ? this.store.server(before) : null
+      const keep = new Set<string>()
+      if (this.conn.serverId && this.conn.status !== 'off') keep.add(this.conn.serverId)
+      const r = this.store.reconcileSubscription(id, f.outcome.servers, keep)
+      this.store.setSubscriptionResult(id, { error: null, info: f.info, title: f.title, intervalHours: f.intervalHours })
+      if (before && beforeRec?.subscriptionId === id && !this.store.server(before)) {
+        const mine = this.store.servers.filter((x) => x.subscriptionId === id)
+        const next = mine.find((x) => x.host === beforeRec.host && x.port === beforeRec.port) ?? mine.find((x) => (x.origName ?? x.name) === (beforeRec.origName ?? beforeRec.name)) ?? mine[0]
+        if (next) this.store.updateSettings({ selectedServerId: next.id })
+      }
+      const parts = [r.added ? `добавлено ${r.added}` : '', r.removed ? `убрано ${r.removed}` : ''].filter(Boolean)
+      const message = parts.length ? `Список серверов обновлён: ${parts.join(', ')}.` : 'Список серверов актуален: изменений нет.'
+      if (!silent) this.toast('success', message)
+      return { ok: true, message }
+    } finally {
+      this.refreshingSubs.delete(id)
+      this.push()
+    }
+  }
+
+  async refreshSubscription(id: string): Promise<{ ok: boolean; message: string }> {
+    return this.doRefresh(id, false)
+  }
+
+  private async refreshDueSubscriptions(): Promise<void> {
+    for (const rec of [...this.store.subscriptions]) {
+      if (subscriptionDue(rec, Date.now(), this.lastSubTry.get(rec.id))) await this.doRefresh(rec.id, true)
+    }
+  }
+
+  async renameSubscription(id: string, name: string): Promise<void> {
+    this.store.renameSubscription(id, name)
+    this.push()
+  }
+
+  async removeSubscription(id: string): Promise<void> {
+    const active = this.conn.serverId ? this.store.server(this.conn.serverId) : null
+    if (active?.subscriptionId === id && this.conn.status !== 'off') await this.disconnect()
+    this.store.removeSubscription(id)
+    this.push()
+  }
+
+  async getQr(kind: 'server' | 'subscription', id: string): Promise<QrResult> {
+    let text: string | null = null
+    let title = ''
+    if (kind === 'server') {
+      const rec = this.store.server(id)
+      if (!rec) return { ok: false, message: 'Такого сервера нет.' }
+      text = this.store.getSecret(id)?.rawLink ?? null
+      title = `Ключ «${rec.name}»`
+      if (!text) return { ok: false, message: 'У этого сервера нет исходной ссылки (он добавлен из готового файла настроек), поэтому QR-код сделать нельзя.' }
+    } else {
+      const sub = this.store.subscription(id)
+      if (!sub) return { ok: false, message: 'Такой подписки нет.' }
+      text = this.store.openUrl(sub)
+      title = `Подписка «${sub.name}»`
+      if (!text) return { ok: false, message: 'Не удалось прочитать адрес подписки.' }
+    }
+    if (text.length > 2200) return { ok: false, message: 'Этот ключ слишком длинный, в QR-код он не помещается.' }
+    try {
+      const dataUrl = await QRCode.toDataURL(text, { errorCorrectionLevel: 'M', margin: 2, width: 440, color: { dark: '#0b1020', light: '#ffffff' } })
+      return { ok: true, dataUrl, title }
+    } catch {
+      return { ok: false, message: 'Не удалось построить QR-код.' }
+    }
+  }
   async runCheck(): Promise<void> { /* в следующих версиях */ }
   async clearCheck(): Promise<void> { /* в следующих версиях */ }
 

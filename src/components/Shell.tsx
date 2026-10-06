@@ -37,9 +37,9 @@ export function Sidebar(): ReactElement {
   const app = useApp((s) => s.app)
   const id = useId()
   const status = app?.conn.status ?? 'off'
-  // На телефоне пока только «Главная» и «Настройки»: остальные разделы появятся в следующих этапах (не показываем пустышки)
+  // На телефоне пока «Главная», «Серверы» и «Настройки»: остальные разделы появятся в следующих этапах (не показываем пустышки)
   const mobile = app?.system.platform === 'android'
-  const nav = mobile ? NAV.filter((n) => n.page === 'home' || n.page === 'settings') : NAV
+  const nav = mobile ? NAV.filter((n) => n.page === 'home' || n.page === 'servers' || n.page === 'settings') : NAV
   const server = app?.servers.find((s) => s.id === (app.conn.serverId ?? app.settings.selectedServerId))
   return (
     <nav className="sidebar" aria-label="Разделы">

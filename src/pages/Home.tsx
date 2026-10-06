@@ -152,7 +152,7 @@ export function Home(): ReactElement {
 
       <div className="stack">
         {server ? (
-          <div data-hint="Выбранный сервер — через него идёт интернет. Нажмите, чтобы открыть список серверов и выбрать другой." className="glass glass--spot server-hero" onMouseMove={spotlight} onClick={() => !mobile && setPage('servers')} role={mobile ? undefined : 'button'} tabIndex={mobile ? undefined : 0} onKeyDown={(e) => !mobile && e.key === 'Enter' && setPage('servers')}>
+          <div data-hint="Выбранный сервер — через него идёт интернет. Нажмите, чтобы открыть список серверов и выбрать другой." className="glass glass--spot server-hero" onMouseMove={spotlight} onClick={() => setPage('servers')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setPage('servers')}>
             <Flag code={server.countryCode} size={38} />
             <div className="server-hero__text">
               <div className="server-hero__name">{server.name}</div>
@@ -161,7 +161,7 @@ export function Home(): ReactElement {
                 <span className="badge">{protocolLabel(server.protocol)}</span>
               </div>
             </div>
-            {!mobile && <Icon name="chevron" style={{ color: 'var(--faint)' }} />}
+            <Icon name="chevron" style={{ color: 'var(--faint)' }} />
           </div>
         ) : (
           <div className="glass server-hero" style={{ cursor: 'default' }}>
