@@ -47,6 +47,12 @@ const scenes = [
   { name: 'servers-testing', q: 'scene=off', page: 'Серверы', wait: 3600, steps: [{ text: 'Проверить задержку' }], afterSteps: 500 },
   { name: 'qr-warning', q: 'scene=off', page: 'Серверы', wait: 1500, steps: [{ sel: '[aria-label="Действия с подпиской"]' }, { text: 'Показать QR-код' }], afterSteps: 900 },
   { name: 'qr-shown', q: 'scene=off', page: 'Серверы', wait: 1500, steps: [{ sel: '[aria-label="Действия с подпиской"]' }, { text: 'Показать QR-код' }, { text: 'Показать код' }], afterSteps: 1400 },
+  { name: 'dir-1-on', q: 'direction=1&scene=on&uptime=754', wait: 5200 },
+  { name: 'dir-2-on', q: 'direction=2&scene=on&uptime=754', wait: 5200 },
+  { name: 'dir-3-on', q: 'direction=3&scene=on&uptime=754', wait: 5200 },
+  { name: 'dir-1-off', q: 'direction=1&scene=off', wait: 1200 },
+  { name: 'dir-2-off', q: 'direction=2&scene=off', wait: 1200 },
+  { name: 'dir-3-off', q: 'direction=3&scene=off', wait: 1200 },
   { name: 'wizard-1', q: 'wizard=1&empty=1', wait: 1300, height: 800 },
   { name: 'wizard-1-added', q: 'wizard=1&empty=1', wait: 1000, height: 800, steps: [{ text: 'Вставить ключ или подписку' }], afterSteps: 900 },
   { name: 'wizard-2', q: 'wizard=1', wait: 1000, height: 800, steps: [{ text: 'Дальше' }], afterSteps: 800 },
@@ -71,7 +77,7 @@ for (const s of scenes) {
   page.on('pageerror', (e) => console.error(`[${s.name}] ошибка страницы:`, e.message))
   page.on('console', (m) => { if (m.type() === 'error') console.error(`[${s.name}] console:`, m.text()) })
   await page.goto(`${base}?${s.q}`, { waitUntil: 'domcontentloaded', timeout: 20000 })
-  await page.waitForSelector('.app .sidebar, .app .wizard', { timeout: 15000 })
+  await page.waitForSelector('.app .sidebar, .app .wizard, .dir', { timeout: 15000 })
   if (s.page) { await page.getByRole('button', { name: s.page }).first().click() }
   await page.waitForTimeout(s.wait)
   if (s.click) {
