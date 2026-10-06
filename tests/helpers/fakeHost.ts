@@ -10,11 +10,15 @@ export interface FakeHostState {
   admin: boolean
   quitCalls: number
   releaseCalls: number
+  startedHidden: boolean
+  autostart: boolean
+  autostartWorks: boolean
+  clipboardWrites: string[]
 }
 
 /** Подставная «система» для проверки контроллера без Windows и без Electron. */
 export function fakeHost(over: Partial<FakeHostState> & { platform?: NodeJS.Platform } = {}): { host: Host; state: FakeHostState } {
-  const state: FakeHostState = { clipboard: '', notes: [], actions: [], taskExists: false, createCancelled: false, runTaskOk: true, admin: false, quitCalls: 0, releaseCalls: 0, ...over }
+  const state: FakeHostState = { clipboard: '', notes: [], actions: [], taskExists: false, createCancelled: false, runTaskOk: true, admin: false, quitCalls: 0, releaseCalls: 0, startedHidden: false, autostart: false, autostartWorks: true, clipboardWrites: [], ...over }
   const host: Host = {
     platform: over.platform ?? 'win32',
     appVersion: '0.0.0-test',
@@ -36,6 +40,10 @@ export function fakeHost(over: Partial<FakeHostState> & { platform?: NodeJS.Plat
       runTask: async () => { state.actions.push('runTask'); return state.runTaskOk }
     },
     releaseControl: () => { state.releaseCalls++ },
+    startedHidden: state.startedHidden,
+    setAutostart: async (enabled) => { state.actions.push(`autostart ${enabled}`); if (state.autostartWorks) state.autostart = enabled; return state.autostart },
+    isAutostart: () => state.autostart,
+    writeClipboard: (t) => { state.clipboardWrites.push(t) },
     fileIcon: async () => null,
     readShortcut: () => null
   }

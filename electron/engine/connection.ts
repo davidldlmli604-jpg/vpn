@@ -5,9 +5,9 @@ import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { GAMES_PRESET, buildSingBoxConfig, redactConfig, type BuildOptions, type Outbound, type RuleSetFile } from '../../core'
-import { engineMissing, humanizeEngineLog, needAdminHuman, noServer, unexpectedExit } from '../../shared/humanErrors'
+import { engineMissing, humanizeEngineLog, needAdminHuman, noServer, protectionHolding, unexpectedExit } from '../../shared/humanErrors'
 import type { ConnState, ExitInfo, HumanError, Mode, Settings, StatsSample } from '../../shared/types'
-import type { KillSwitch } from '../platform/killswitch'
+import { TUN_LOCAL_ADDRESS, TUN_LOCAL_ADDRESS_V6, type KillSwitch } from '../platform/killswitch'
 import type { SystemProxy } from '../platform/systemProxy'
 import { ClashClient } from './clash'
 import { pickPort, randomFreePort } from './ports'
@@ -36,6 +36,8 @@ export interface ConnectionDeps {
   /** Определение страны выходного адреса (через VPN). */
   fetchExit?(mixedPort: number): Promise<Pick<ExitInfo, 'countryCode' | 'countryName' | 'ip' | 'error'>>
   log(line: string): void
+  /** Предупреждение, которое нужно показать человеку (например, защита не включилась). */
+  onWarning?(text: string): void
   /** Мелкие события для уведомлений. */
   onEvent?(e: ConnectionEvent): void
   timing?: Partial<Timing>
@@ -75,7 +77,7 @@ const DEFAULT_TIMING: Timing = {
 }
 
 export function initialConnState(): ConnState {
-  return { status: 'off', error: null, serverId: null, since: null, reconnect: null, degraded: false, mode: null }
+  return { status: 'off', error: null, serverId: null, since: null, reconnect: null, degraded: false, mode: null, blocked: false }
 }
 
 export class ConnectionManager {
@@ -131,6 +133,25 @@ export class ConnectionManager {
     return this.lastConfig ? JSON.stringify(redactConfig(this.lastConfig), null, 2) : null
   }
 
+  /**
+   * Итоговые настройки движка для выбранного сервера «как они были бы сейчас», без запуска и без секретов.
+   * Если подключение уже работает, показываются настоящие (с реальными портами).
+   */
+  preview(serverId: string | null): { json: string; note: string } | null {
+    const settings = this.deps.getSettings()
+    const live = this.redactedConfig()
+    const id = serverId ?? settings.selectedServerId
+    const name = id ? this.deps.getServerName(id) : null
+    const modeWords = settings.mode === 'tun' ? 'Весь компьютер' : 'Браузер и программы'
+    if (live && this.isRunning) return { json: live, note: `Настоящие настройки работающего подключения · режим «${modeWords}» · сервер «${name ?? '—'}». Секреты скрыты.` }
+    const secret = id ? this.deps.getSecret(id) : null
+    if (!id || !secret) return null
+    const { primary } = this.deps.ruleSets()
+    const cfg = buildSingBoxConfig(this.buildOptions(settings, secret.outbound, primary, 9090, 'секрет-управления', settings.advanced.mixedPort))
+    const final = this.deps.configTransform ? this.deps.configTransform(cfg) : cfg
+    return { json: JSON.stringify(redactConfig(final), null, 2), note: `Так будут выглядеть настройки при подключении · режим «${modeWords}» · сервер «${name ?? '—'}». Секреты скрыты; порты управления подставятся при запуске.` }
+  }
+
   // ---------------------------------------------------------------- подключение
 
   async connect(serverId: string | null): Promise<void> {
@@ -145,7 +166,7 @@ export class ConnectionManager {
     this.failStreak = 0
     this.clearReconnectTimer()
     const mode = this.deps.getSettings().mode
-    this.set({ status: 'connecting', error: null, serverId: id, since: null, reconnect: null, degraded: false, mode })
+    this.set({ status: 'connecting', error: null, serverId: id, since: null, reconnect: null, degraded: false, mode, blocked: false })
     await this.startOnce(id, false)
   }
 
@@ -164,7 +185,7 @@ export class ConnectionManager {
         await this.fail(err, isRetry)
         return
       }
-      this.set({ status: 'on', error: null, since: this.state.since ?? Date.now(), reconnect: null, degraded: false })
+      this.set({ status: 'on', error: null, since: this.state.since ?? Date.now(), reconnect: null, degraded: false, blocked: false })
       this.startPollers()
       const name = this.deps.getServerName(serverId) ?? 'сервер'
       this.deps.onEvent?.(isRetry ? { type: 'reconnected', serverName: name } : { type: 'connected', serverName: name })
@@ -187,7 +208,7 @@ export class ConnectionManager {
       return
     }
     await this.finishStopped()
-    this.set({ status: 'error', error, since: null, reconnect: null, degraded: false })
+    this.set({ status: 'error', error, since: null, reconnect: null, degraded: false, blocked: false })
     this.deps.onEvent?.({ type: 'failed', error })
   }
 
@@ -225,8 +246,11 @@ export class ConnectionManager {
 
     // защита от утечки: сначала закрываем «калитку», потом открываем туннель
     if (mode === 'tun' && settings.killSwitch && this.deps.killSwitch?.supported) {
-      const r = await this.deps.killSwitch.arm(this.deps.engineExe)
-      if (!r.ok) this.deps.log(`Аварийная блокировка не включилась: ${r.error ?? ''}`)
+      const r = await this.deps.killSwitch.arm(this.deps.engineExe, settings.advanced.tunIpv6 ? [TUN_LOCAL_ADDRESS, TUN_LOCAL_ADDRESS_V6] : [TUN_LOCAL_ADDRESS])
+      if (!r.ok) {
+        this.deps.log(`Аварийная блокировка не включилась: ${r.error ?? ''}`)
+        this.deps.onWarning?.('Защита не включилась: Windows не дала изменить правила сети. VPN работает, но если он оборвётся, интернет сам не отключится.')
+      }
     }
 
     const proc = new SingBoxProcess(this.deps.engineExe, this.configPath, this.deps.workDir)
@@ -267,13 +291,13 @@ export class ConnectionManager {
     }
   }
 
-  private buildOptions(settings: Settings, outbound: Outbound, ruleSets: RuleSetFile[], clashPort: number, secret: string): BuildOptions {
+  private buildOptions(settings: Settings, outbound: Outbound, ruleSets: RuleSetFile[], clashPort: number, secret: string, mixedPort: number = this.mixedPort): BuildOptions {
     const adv = settings.advanced
     const games = settings.bypassGames ? GAMES : []
     return {
       outbound,
       mode: settings.mode,
-      mixedPort: this.mixedPort,
+      mixedPort,
       clashPort,
       clashSecret: secret,
       tun: { mtu: adv.mtu, stack: adv.tunStack, strictRoute: adv.strictRoute, ipv6: adv.tunIpv6 },
@@ -397,16 +421,24 @@ export class ConnectionManager {
     if (status !== 'on') return
     this.stopPollers()
     this.carry = { up: this.carry.up + this.prev.up, down: this.carry.down + this.prev.down }
+    // Защита держит интернет закрытым: в туннеле — правилами брандмауэра, в режиме «Браузер и программы» — системным
+    // прокси, который указывает «в никуда». Снимается только когда VPN вернулся или человек сам скажет.
+    const s = this.deps.getSettings()
+    const mode = this.state.mode
+    const holding = s.killSwitch && (mode === 'proxy' || (mode === 'tun' && !!this.deps.killSwitch?.supported))
+    this.set({ blocked: holding })
     this.deps.onEvent?.({ type: 'lost' })
     void (async () => {
       this.proc = null
-      const s = this.deps.getSettings()
-      // системный прокси: если защита включена — оставляем его указывать «в никуда», чтобы ничего не утекало
-      if (!(s.killSwitch && this.state.mode === 'proxy')) {
+      this.deps.recordEngine?.(null)
+      if (!(holding && mode === 'proxy')) {
         try { await this.deps.systemProxy.clear() } catch { /* ничего */ }
       }
       if (s.autoReconnect && this.state.serverId) this.scheduleReconnect(unexpectedExit())
-      else {
+      else if (holding) {
+        await this.teardownEngine(true)
+        this.set({ status: 'error', error: protectionHolding(), since: null, degraded: false, reconnect: null })
+      } else {
         await this.finishStopped()
         this.set({ status: 'error', error: unexpectedExit(), since: null, degraded: false })
       }
@@ -443,7 +475,7 @@ export class ConnectionManager {
     this.clearReconnectTimer()
     this.set({ status: 'disconnecting', reconnect: null })
     await this.finishStopped()
-    this.set({ status: 'off', error: null, since: null, serverId: this.state.serverId, reconnect: null, degraded: false, mode: null })
+    this.set({ status: 'off', error: null, since: null, serverId: this.state.serverId, reconnect: null, degraded: false, mode: null, blocked: false })
     this.deps.onEvent?.({ type: 'disconnected' })
   }
 
@@ -466,6 +498,16 @@ export class ConnectionManager {
     if (removeConfig && this.configPath) {
       try { rmSync(this.configPath, { force: true }) } catch { /* ничего */ }
     }
+  }
+
+  /** Человек отказался от защиты, пока связь оборвана: снимаем блокировку и возвращаем обычное состояние. */
+  async releaseProtection(): Promise<void> {
+    if (!this.state.blocked || (this.state.status !== 'error' && this.state.status !== 'connecting')) return
+    this.userStopped = true
+    this.attemptId++
+    this.clearReconnectTimer()
+    await this.finishStopped()
+    this.set({ status: 'off', error: null, since: null, reconnect: null, degraded: false, mode: null, blocked: false })
   }
 
   /** Вызывается при выходе из приложения. */

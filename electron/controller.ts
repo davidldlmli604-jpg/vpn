@@ -6,10 +6,12 @@ import { join } from 'node:path'
 import { parseInput } from '../core'
 import type { VpnApi, ToastMessage } from '../shared/api'
 import { DEFAULT_SETTINGS } from '../shared/defaults'
-import type { AddResult, AppState, CheckReport, ConnState, ExitInfo, QrResult, RunningApp, Settings, StatsSample, SystemInfo } from '../shared/types'
+import { checkAdvanced } from '../shared/advanced'
+import type { AddResult, AppState, CheckReport, ConfigPreview, ConnState, ExitInfo, QrResult, RunningApp, Settings, StatsSample, SystemInfo } from '../shared/types'
 import { ConnectionManager, initialConnState, type ConnectionEvent } from './engine/connection'
 import { NoopSystemProxy, WindowsSystemProxy, type SystemProxy } from './platform/systemProxy'
 import { KillSwitch } from './platform/killswitch'
+import type { Runner } from './platform/exec'
 import { countryOfIp, fetchExitInfo } from './services/ipcheck'
 import { newReport, runSelfCheck } from './services/selfcheck'
 import { probeRoute } from './engine/route'
@@ -43,6 +45,12 @@ export interface Host {
   }
   /** Освободить «замок единственной копии», чтобы новая копия (с правами) могла стать главной. */
   releaseControl(): void
+  /** Программа запущена свёрнутой (автозапуск) — окно показывать не нужно. */
+  startedHidden: boolean
+  /** Включить/выключить запуск вместе с Windows. Возвращает, как стало на самом деле. */
+  setAutostart(enabled: boolean): Promise<boolean>
+  isAutostart(): boolean
+  writeClipboard(text: string): void
   /** Иконка программы как картинка (data URL). */
   fileIcon(path: string): Promise<string | null>
   /** Цель ярлыка .lnk (куда он ведёт) или null. */
@@ -85,6 +93,8 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
   private check: CheckReport | null = null
   private checkToken = 0
   private runningCheck = 0
+  /** Растёт при каждом нажатии человека «включить/выключить»: так автоподключение понимает, что человек взял управление на себя. */
+  private userActionSeq = 0
   private fetchExitFn: typeof fetchExitInfo
   private countryOfFn: typeof countryOfIp
   private ruCheckUrl: string
@@ -94,7 +104,7 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
   private toastListeners: Array<Listener<ToastMessage>> = []
   private navListeners: Array<Listener<string>> = []
 
-  constructor(readonly host: Host, readonly paths: ControllerPaths, sealer: Sealer, overrides: { systemProxy?: SystemProxy; fetchExit?: typeof fetchExitInfo; ruleFetch?: (url: string) => Promise<Buffer>; probeUrls?: string[]; fetchSubscription?: (url: string, proxyPort: number | null) => Promise<SubscriptionFetch>; countryOf?: typeof countryOfIp; ruCheckUrl?: string; configTransform?: (config: Record<string, unknown>) => Record<string, unknown> } = {}) {
+  constructor(readonly host: Host, readonly paths: ControllerPaths, sealer: Sealer, overrides: { systemProxy?: SystemProxy; fetchExit?: typeof fetchExitInfo; ruleFetch?: (url: string) => Promise<Buffer>; probeUrls?: string[]; fetchSubscription?: (url: string, proxyPort: number | null) => Promise<SubscriptionFetch>; killSwitchRunner?: Runner; countryOf?: typeof countryOfIp; ruCheckUrl?: string; configTransform?: (config: Record<string, unknown>) => Record<string, unknown> } = {}) {
     this.probeUrls = overrides.probeUrls
     this.fetchSub = overrides.fetchSubscription ?? realFetchSubscription
     this.countryOfFn = overrides.countryOf ?? countryOfIp
@@ -120,7 +130,7 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
     const killSwitch = new KillSwitch({
       load: () => this.store.runtimeGet('killSwitch') ?? { active: false, previous: null },
       save: (s) => this.store.runtimeSet('killSwitch', s.active ? s : null)
-    }, undefined, host.platform)
+    }, overrides.killSwitchRunner, host.platform)
 
     this.killSwitch = killSwitch
     const fetchExit = overrides.fetchExit ?? fetchExitInfo
@@ -141,6 +151,7 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
         return { countryCode: r.countryCode, countryName: r.countryName, ip: r.ip, error: r.error }
       },
       log: (l) => this.log.add(l),
+      onWarning: (t) => this.toast('warn', t),
       recordEngine: (pid) => this.store.runtimeSet('enginePid', pid),
       probeUrls: overrides.probeUrls,
       configTransform: overrides.configTransform,
@@ -161,6 +172,11 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
     await this.recoverFromCrash()
     this.admin = await this.host.isAdmin()
     this.elevationReady = await this.host.elevation.taskExists()
+    // автозапуск мог «слететь» (переустановка, перенос программы): если он включён в настройках, а в системе его нет — возвращаем
+    if (this.host.platform === 'win32' && this.store.settings.autostart && !this.host.isAutostart()) {
+      this.log.add('Автозапуск был потерян — включаю заново')
+      await this.host.setAutostart(true).catch(() => false)
+    }
     void this.readEngineVersion()
     this.pushState()
     // списки правил обновляются сами: при запуске (если устарели) и затем раз в несколько часов
@@ -243,8 +259,8 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
       singbox: { found: existsSync(this.paths.engineExe), version: this.engineVersion, path: this.paths.engineExe },
       secureStorage: this.store.secureAvailable,
       rules: this.rules.status(),
-      startedHidden: false,
-      killSwitchActive: false
+      startedHidden: this.host.startedHidden,
+      killSwitchActive: this.killSwitch.active
     }
   }
 
@@ -595,13 +611,42 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
   // ---------------------------------------------------------------- подключение
 
   async connect(serverId?: string): Promise<void> {
+    this.userActionSeq++
+    await this.doConnect(serverId)
+  }
+
+  private async doConnect(serverId?: string): Promise<void> {
     const id = serverId ?? this.store.settings.selectedServerId
     if (id && id !== this.store.settings.selectedServerId) this.store.updateSettings({ selectedServerId: id })
     await this.conn.connect(id ?? null)
   }
 
   async disconnect(): Promise<void> {
+    this.userActionSeq++
     await this.conn.disconnect()
+  }
+
+  /**
+   * «Подключаться при запуске программы». Сразу после запуска Windows сеть может быть ещё не готова (Wi-Fi поднимается),
+   * поэтому при «сетевых» неудачах программа пробует ещё несколько раз с паузами. Как только человек сам нажал кнопку — не мешает.
+   */
+  async autoConnectOnLaunch(delaysMs: number[] = [1500, 5000, 10000, 20000]): Promise<void> {
+    const s = this.store.settings
+    if (!s.connectOnLaunch || !s.selectedServerId || !this.store.server(s.selectedServerId)) return
+    const seq = this.userActionSeq
+    const retriable = new Set(['server-silent', 'dns', 'offline', 'start-timeout'])
+    this.log.add('Подключение при запуске программы')
+    for (let i = 0; i < delaysMs.length; i++) {
+      await new Promise((r) => setTimeout(r, delaysMs[i]))
+      if (seq !== this.userActionSeq) return // человек уже взял управление на себя
+      const st = this.conn.state.status
+      if (st === 'on' || st === 'connecting') return
+      await this.doConnect()
+      if (this.conn.state.status === 'on') return
+      const code = this.conn.state.error?.code ?? ''
+      if (!retriable.has(code)) return // повторять бессмысленно (нет прав, ключ неверный…)
+      if (i < delaysMs.length - 1) this.log.add('Подключение при запуске не вышло, пробую ещё раз')
+    }
   }
 
   /** Перезапуск подключения с новыми настройками — без лишних уведомлений. */
@@ -734,21 +779,77 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
   // ---------------------------------------------------------------- настройки
 
   async updateSettings(patch: Partial<Settings>): Promise<void> {
+    if (patch.autostart !== undefined && patch.autostart !== this.store.settings.autostart) {
+      const want = patch.autostart
+      let actual = !want
+      try { actual = await this.host.setAutostart(want) } catch { /* считаем, что не вышло */ }
+      if (actual !== want) {
+        patch = { ...patch, autostart: actual }
+        this.toast('warn', want ? 'Не удалось включить автозапуск вместе с Windows. Попробуйте ещё раз или запустите программу от имени администратора.' : 'Не удалось выключить автозапуск. Его можно отключить в «Диспетчере задач» → «Автозагрузка».')
+      }
+    }
     const before = this.store.settings
     const after = this.store.updateSettings(patch)
     const routingKeys: Array<keyof Settings> = ['mode', 'bypassRu', 'bypassGames', 'bypassApps', 'alwaysVpn', 'alwaysDirect', 'killSwitch', 'dnsLeakProtection']
     const needsRestart = routingKeys.some((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]))
     this.pushState()
+    // защиту выключили, пока связь оборвана и интернет закрыт: сразу открываем
+    if (before.killSwitch && !after.killSwitch && this.conn.state.blocked) await this.conn.releaseProtection()
+    else if (before.killSwitch && !after.killSwitch && this.conn.state.status === 'off') await this.killSwitch.disarm()
     if (needsRestart && (this.conn.state.status === 'on' || this.conn.state.status === 'connecting')) this.scheduleRestart('Изменены настройки')
+    this.pushState()
   }
 
   async updateAdvanced(patch: Partial<Settings['advanced']>): Promise<void> {
     const before = JSON.stringify(this.store.settings.advanced)
-    this.store.updateAdvanced(patch)
+    const { value, problems } = checkAdvanced(patch, this.store.settings.advanced)
+    for (const p of problems) this.toast('warn', p)
+    this.store.updateAdvanced(value)
     this.pushState()
     if (before !== JSON.stringify(this.store.settings.advanced) && (this.conn.state.status === 'on' || this.conn.state.status === 'connecting')) {
       this.scheduleRestart('Изменены расширенные настройки')
     }
+  }
+
+  async resetAdvanced(): Promise<void> {
+    await this.updateAdvanced({ ...DEFAULT_SETTINGS.advanced })
+    this.toast('success', 'Настройки для специалиста сброшены к стандартным.')
+  }
+
+  // ---------------------------------------------------------------- журнал, итоговые настройки
+
+  /** Последние строки журнала (ключи и пароли из него уже вычищены). */
+  async getLogs(): Promise<string[]> {
+    return this.log.all.slice(-400)
+  }
+
+  async clearLogs(): Promise<void> {
+    this.log.clear()
+  }
+
+  /** Итоговый файл настроек движка со скрытыми секретами. */
+  async getConfigPreview(): Promise<ConfigPreview | null> {
+    return this.conn.preview(this.store.settings.selectedServerId)
+  }
+
+  async copyText(text: string): Promise<void> {
+    this.host.writeClipboard(String(text).slice(0, 2_000_000))
+  }
+
+  // ---------------------------------------------------------------- «Починить интернет»
+
+  /**
+   * Аварийная кнопка: останавливает VPN, снимает защиту (правила брандмауэра), возвращает системный прокси и убирает
+   * забытый движок. Нужна на случай, если после сбоя интернета нет.
+   */
+  async recoverInternet(): Promise<{ ok: boolean; message: string }> {
+    this.log.add('Починить интернет: останавливаю VPN, снимаю защиту и системный прокси')
+    try { await this.conn.disconnect() } catch { /* ничего */ }
+    try { await this.killSwitch.disarm(true) } catch { /* ничего */ }
+    try { await this.systemProxy.clear() } catch { /* ничего */ }
+    try { await this.recoverFromCrash() } catch { /* ничего */ }
+    this.pushState()
+    return { ok: true, message: 'Готово: VPN выключен, все ограничения сняты. Если интернета всё равно нет — проверьте роутер или провайдера.' }
   }
 
   // ---------------------------------------------------------------- окно

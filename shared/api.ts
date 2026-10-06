@@ -1,5 +1,5 @@
 // Договор между окном и «внутренностями»: что окно может попросить и о чём оно узнаёт.
-import type { AddResult, AppState, QrResult, RunningApp, Settings, StatsSample } from './types'
+import type { AddResult, AppState, ConfigPreview, QrResult, RunningApp, Settings, StatsSample } from './types'
 
 export interface ToastMessage {
   id: string
@@ -47,6 +47,9 @@ export interface VpnApi {
   /** Забрать выданное разрешение администратора (удаляет задачу планировщика). */
   revokeElevation(): Promise<{ ok: boolean; message: string }>
 
+  /** Аварийная кнопка: выключить VPN, снять защиту и системный прокси. */
+  recoverInternet(): Promise<{ ok: boolean; message: string }>
+
   // исключения
   listRunningApps(): Promise<RunningApp[]>
   listInstalledApps(): Promise<RunningApp[]>
@@ -55,6 +58,14 @@ export interface VpnApi {
   // настройки
   updateSettings(patch: Partial<Settings>): Promise<void>
   updateAdvanced(patch: Partial<Settings['advanced']>): Promise<void>
+  resetAdvanced(): Promise<void>
+
+  // для специалиста
+  getLogs(): Promise<string[]>
+  clearLogs(): Promise<void>
+  /** Итоговые настройки движка без секретов; null — сервер не выбран. */
+  getConfigPreview(): Promise<ConfigPreview | null>
+  copyText(text: string): Promise<void>
 
   // окно
   windowAction(action: 'minimize' | 'close' | 'hide-to-tray'): Promise<void>
@@ -71,8 +82,8 @@ export const IPC = {
 
 /** Методы, которые разрешено вызывать из окна. Всё остальное «внутренности» отвергают. */
 export const INVOKABLE = [
-  'getState', 'pasteKey', 'addKeyText', 'selectServer', 'renameServer', 'removeServer', 'toggleFavorite', 'pingServers', 'refreshSubscription', 'renameSubscription', 'removeSubscription', 'getQr', 'runCheck', 'clearCheck',
-  'connect', 'disconnect', 'requestTunMode', 'revokeElevation', 'listRunningApps', 'listInstalledApps', 'updateRules', 'updateSettings', 'updateAdvanced', 'windowAction', 'quit'
+  'getState', 'pasteKey', 'addKeyText', 'selectServer', 'renameServer', 'removeServer', 'toggleFavorite', 'pingServers', 'refreshSubscription', 'renameSubscription', 'removeSubscription', 'getQr', 'runCheck', 'clearCheck', 'recoverInternet',
+  'connect', 'disconnect', 'requestTunMode', 'revokeElevation', 'listRunningApps', 'listInstalledApps', 'updateRules', 'updateSettings', 'updateAdvanced', 'resetAdvanced', 'getLogs', 'clearLogs', 'getConfigPreview', 'copyText', 'windowAction', 'quit'
 ] as const
 
 declare global {

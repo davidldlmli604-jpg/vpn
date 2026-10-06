@@ -11,6 +11,8 @@
 
 ## Быстрый старт (Windows)
 
+Из исходников:
+
 ```
 npm install
 npm run fetch:singbox -- --target win32-x64
@@ -18,13 +20,24 @@ npm run build
 npm start
 ```
 
+Готовая программа:
+
+| Команда | Результат |
+|---|---|
+| `npm run dist` | установщик `release/tropa-setup-<версия>.exe` (для текущего пользователя, без прав администратора) |
+| `npm run dist:portable` | переносимая папка в zip — распаковал и запустил (собирается и без Windows) |
+
+Установщик `.exe` на Linux не собирается (нужен wine), поэтому есть сборка на GitHub: **Actions → «Сборка для Windows» → Run workflow**.
+
+Если после сбоя пропал интернет: «Защита» → «Починить интернет». Подробнее — в [ОТЧЁТ.md](ОТЧЁТ.md).
+
 ## Для разработчика
 
 | Команда | Что делает |
 |---|---|
 | `npm run dev` | окно с живой перезагрузкой |
 | `npm run ui` | только оформление в браузере, с тестовыми данными |
-| `npm test` | 280+ автотестов (нужен sing-box: `npm run fetch:singbox`) |
+| `npm test` | 340+ автотестов (нужен sing-box: `npm run fetch:singbox`) |
 | `npm run test:e2e` | настоящее окно в Electron (под Linux — через `xvfb-run`) |
 | `npm run typecheck` | проверка типов |
 | `npm run screenshots` | снимки окна в разных оформлениях |
@@ -32,3 +45,5 @@ npm start
 Название приложения меняется в одном месте — `brand.json`.
 
 Модуль `core/` (разбор ключей и сборка настроек) не зависит от Electron и Node — его можно переносить в версию под Android.
+
+Лицензии сторонних компонентов (в том числе sing-box, GPL) — в [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

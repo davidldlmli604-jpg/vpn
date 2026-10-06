@@ -115,6 +115,8 @@ export interface ConnState {
   degraded: boolean
   /** Режим, в котором реально работаем сейчас. */
   mode: Mode | null
+  /** Связь оборвалась, и защита намеренно держит интернет закрытым, пока VPN не вернётся. */
+  blocked: boolean
 }
 
 export interface SystemInfo {

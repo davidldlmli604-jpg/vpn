@@ -38,6 +38,7 @@ const api: VpnApi = {
   disconnect: () => call('disconnect'),
   requestTunMode: () => call('requestTunMode'),
   revokeElevation: () => call('revokeElevation'),
+  recoverInternet: () => call('recoverInternet'),
 
   listRunningApps: () => call('listRunningApps'),
   listInstalledApps: () => call('listInstalledApps'),
@@ -45,6 +46,11 @@ const api: VpnApi = {
 
   updateSettings: (patch) => call('updateSettings', patch),
   updateAdvanced: (patch) => call('updateAdvanced', patch),
+  resetAdvanced: () => call('resetAdvanced'),
+  getLogs: () => call('getLogs'),
+  clearLogs: () => call('clearLogs'),
+  getConfigPreview: () => call('getConfigPreview'),
+  copyText: (text) => call('copyText', text),
 
   windowAction: (action) => call('windowAction', action),
   quit: () => call('quit')

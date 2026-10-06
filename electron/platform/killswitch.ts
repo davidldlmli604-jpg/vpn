@@ -8,6 +8,7 @@ import { powershellArgs, run, type Runner } from './exec'
 
 export const RULE_GROUP = 'TropaKillSwitch'
 export const TUN_LOCAL_ADDRESS = '172.19.0.1'
+export const TUN_LOCAL_ADDRESS_V6 = 'fdfe:dcba:9876::1'
 export const LAN_RANGES = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', '224.0.0.0/4', 'fe80::/10', 'ff00::/8', 'fc00::/7']
 
 type Policy = 'Allow' | 'Block' | 'NotConfigured'
@@ -32,12 +33,12 @@ export function parsePolicies(out: string): ProfilePolicies | null {
   return res.Domain && res.Private && res.Public ? (res as ProfilePolicies) : null
 }
 
-export function armScript(engineExe: string): string {
+export function armScript(engineExe: string, tunAddresses: string[] = [TUN_LOCAL_ADDRESS]): string {
   return `
 $ErrorActionPreference = 'Stop'
 Get-NetFirewallRule -Group ${q(RULE_GROUP)} -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 New-NetFirewallRule -DisplayName 'Tropa: движок' -Group ${q(RULE_GROUP)} -Direction Outbound -Action Allow -Program ${q(engineExe)} -Profile Any | Out-Null
-New-NetFirewallRule -DisplayName 'Tropa: туннель' -Group ${q(RULE_GROUP)} -Direction Outbound -Action Allow -LocalAddress ${q(TUN_LOCAL_ADDRESS)} -Profile Any | Out-Null
+New-NetFirewallRule -DisplayName 'Tropa: туннель' -Group ${q(RULE_GROUP)} -Direction Outbound -Action Allow -LocalAddress ${tunAddresses.map(q).join(',')} -Profile Any | Out-Null
 New-NetFirewallRule -DisplayName 'Tropa: домашняя сеть' -Group ${q(RULE_GROUP)} -Direction Outbound -Action Allow -RemoteAddress ${LAN_RANGES.map(q).join(',')} -Profile Any | Out-Null
 Set-NetFirewallProfile -Profile Domain,Private,Public -DefaultOutboundAction Block
 `
@@ -69,7 +70,8 @@ export class KillSwitch {
     return this.store.load().active
   }
 
-  async arm(engineExe: string): Promise<{ ok: boolean; error?: string }> {
+  /** tunAddresses — адреса самого туннеля (у IPv4-туннеля один, при включённом IPv6 — два): с них идёт разрешённый трафик. */
+  async arm(engineExe: string, tunAddresses: string[] = [TUN_LOCAL_ADDRESS]): Promise<{ ok: boolean; error?: string }> {
     if (!this.supported) return { ok: false, error: 'not-supported' }
     const saved = this.store.load()
     let previous = saved.previous
@@ -79,7 +81,7 @@ export class KillSwitch {
     }
     // сначала записываем намерение: если программа упадёт посреди настройки, при следующем запуске всё вернётся
     this.store.save({ active: true, previous })
-    const r = await this.exec('powershell.exe', powershellArgs(armScript(engineExe)), { timeoutMs: 60000 })
+    const r = await this.exec('powershell.exe', powershellArgs(armScript(engineExe, tunAddresses)), { timeoutMs: 60000 })
     if (r.code !== 0) {
       await this.disarm()
       return { ok: false, error: r.stderr.trim().slice(0, 300) || 'не удалось настроить брандмауэр' }
@@ -87,9 +89,11 @@ export class KillSwitch {
     return { ok: true }
   }
 
-  async disarm(): Promise<void> {
+  /** Снимает защиту. Без force — только если она была включена (чтобы не запускать PowerShell при каждом отключении). */
+  async disarm(force = false): Promise<void> {
     if (!this.supported) return
-    const { previous } = this.store.load()
+    const { previous, active } = this.store.load()
+    if (!active && !force) return
     await this.exec('powershell.exe', powershellArgs(disarmScript(previous)), { timeoutMs: 60000 })
     this.store.save({ active: false, previous: null })
   }

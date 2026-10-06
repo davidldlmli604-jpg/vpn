@@ -47,6 +47,17 @@ const scenes = [
   { name: 'servers-testing', q: 'scene=off', page: 'Серверы', wait: 3600, steps: [{ text: 'Проверить задержку' }], afterSteps: 500 },
   { name: 'qr-warning', q: 'scene=off', page: 'Серверы', wait: 1500, steps: [{ sel: '[aria-label="Действия с подпиской"]' }, { text: 'Показать QR-код' }], afterSteps: 900 },
   { name: 'qr-shown', q: 'scene=off', page: 'Серверы', wait: 1500, steps: [{ sel: '[aria-label="Действия с подпиской"]' }, { text: 'Показать QR-код' }, { text: 'Показать код' }], afterSteps: 1400 },
+  { name: 'wizard-1', q: 'wizard=1&empty=1', wait: 1300, height: 800 },
+  { name: 'wizard-1-added', q: 'wizard=1&empty=1', wait: 1000, height: 800, steps: [{ text: 'Вставить ключ или подписку' }], afterSteps: 900 },
+  { name: 'wizard-2', q: 'wizard=1', wait: 1000, height: 800, steps: [{ text: 'Дальше' }], afterSteps: 800 },
+  { name: 'wizard-3', q: 'wizard=1', wait: 1000, height: 900, steps: [{ text: 'Дальше' }, { text: 'Дальше' }], afterSteps: 900 },
+  { name: 'wizard-3-on', q: 'wizard=1&palette=sunset', wait: 1000, height: 900, steps: [{ text: 'Дальше' }, { text: 'Дальше' }, { sel: '.power__face' }], afterSteps: 4200 },
+  { name: 'expert-closed', q: 'scene=off', page: 'Настройки', wait: 1200, height: 1300 },
+  { name: 'expert-open', q: 'scene=off', page: 'Настройки', wait: 1000, height: 1700, steps: [{ text: 'Для специалиста' }], afterSteps: 900 },
+  { name: 'protection-off', q: 'scene=off', page: 'Защита', wait: 1400, height: 900 },
+  { name: 'protection-on-tun', q: 'scene=off&ks=1&mode=tun', page: 'Защита', wait: 1400, height: 900 },
+  { name: 'protection-on-proxy', q: 'scene=off&ks=1', page: 'Защита', wait: 1400, height: 900 },
+  { name: 'home-blocked', q: 'scene=blocked&ks=1&mode=tun', wait: 1500, height: 900 },
   { name: 'check-running', q: 'scene=check', wait: 4300, height: 1000 },
   { name: 'check-ok', q: 'scene=check', wait: 7600, height: 1000 },
   { name: 'check-warn', q: 'scene=check&check=warn&palette=sunset', wait: 7600, height: 1000 },
@@ -60,7 +71,7 @@ for (const s of scenes) {
   page.on('pageerror', (e) => console.error(`[${s.name}] ошибка страницы:`, e.message))
   page.on('console', (m) => { if (m.type() === 'error') console.error(`[${s.name}] console:`, m.text()) })
   await page.goto(`${base}?${s.q}`, { waitUntil: 'domcontentloaded', timeout: 20000 })
-  await page.waitForSelector('.app .sidebar', { timeout: 15000 })
+  await page.waitForSelector('.app .sidebar, .app .wizard', { timeout: 15000 })
   if (s.page) { await page.getByRole('button', { name: s.page }).first().click() }
   await page.waitForTimeout(s.wait)
   if (s.click) {

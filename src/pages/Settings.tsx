@@ -2,6 +2,7 @@ import { motion } from 'framer-motion'
 import type { ReactElement } from 'react'
 import brand from '@brand'
 import type { MotionLevel, Palette, ThemeMode } from '@shared/types'
+import { Expert } from '../components/Expert'
 import { Icon } from '../components/Icon'
 import { Chips, Setting, Toggle } from '../components/controls'
 import { withThemeTransition } from '../lib/themeTransition'
@@ -83,12 +84,22 @@ export function Settings(): ReactElement {
       </section>
 
       <section className="section">
-        <h2 className="section__title">Подключение</h2>
+        <h2 className="section__title">Запуск и работа</h2>
         <div className="glass card">
-          <Setting name="Переподключаться при обрыве" tech="автопереподключение" hint="Если связь пропала, программа сама попробует подключиться снова. Лучше оставить включённым.">
-            <Toggle label="Переподключаться при обрыве" checked={settings.autoReconnect} onChange={(v) => set({ autoReconnect: v })} />
+          {system.platform === 'win32' && (
+            <Setting name="Запускать вместе с Windows" tech="автозапуск" hint="Программа сама включится при входе в Windows и свернётся к часам, чтобы не мешать. Если вам нужен VPN каждый день — удобно." help="С этой настройкой программа запускается вместе с Windows и сразу прячется в трей (значок возле часов). Окно можно открыть щелчком по значку.">
+              <Toggle label="Запускать вместе с Windows" checked={settings.autostart} onChange={(v) => set({ autostart: v })} />
+            </Setting>
+          )}
+          <Setting name="Подключаться при запуске" tech="автоподключение" hint="Как только программа запустится, она сама включит VPN через выбранный сервер. Вместе с автозапуском: включили компьютер — уже под защитой." help="Если включить вместе с «Запускать вместе с Windows», VPN будет подключаться сам сразу после загрузки компьютера, вам не придётся нажимать кнопку.">
+            <Toggle label="Подключаться при запуске" checked={settings.connectOnLaunch} onChange={(v) => set({ connectOnLaunch: v })} />
           </Setting>
-          <Setting name="Уведомления" hint="Небольшие сообщения справа внизу: подключено, отключено, связь оборвалась.">
+          {system.platform === 'win32' && (
+            <Setting name="Крестик сворачивает в трей" tech="значок возле часов" hint="Окно закрывается, но программа и VPN продолжают работать — значок остаётся возле часов. Выйти совсем: правый щелчок по значку → «Выйти». Если выключить, крестик закрывает программу и отключает VPN." help="Если включено, красный крестик только прячет окно, а VPN продолжает работать. Вернуть окно — щелчок по значку возле часов. Закрыть совсем — правый щелчок по значку → «Выйти».">
+              <Toggle label="Крестик сворачивает в трей" checked={settings.closeToTray} onChange={(v) => set({ closeToTray: v })} />
+            </Setting>
+          )}
+          <Setting name="Уведомления" hint="Небольшие сообщения Windows: подключено, отключено, связь оборвалась.">
             <Toggle label="Уведомления" checked={settings.notifications} onChange={(v) => set({ notifications: v })} />
           </Setting>
         </div>
@@ -108,6 +119,8 @@ export function Settings(): ReactElement {
           </div>
         </section>
       )}
+
+      <Expert />
 
       <section className="section">
         <h2 className="section__title">О программе</h2>

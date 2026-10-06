@@ -1,0 +1,44 @@
+# Сборка установщика для Windows на настоящей Windows (на Linux установщик .exe не собирается: нужен wine).
+# Запуск: вкладка Actions → «Сборка для Windows» → Run workflow. Готовые файлы — в разделе Artifacts запуска.
+name: Сборка для Windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  tests:
+    name: Проверки (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run fetch:singbox
+      - run: npm run typecheck
+      - run: npm test
+
+  windows:
+    name: Установщик (Windows)
+    needs: tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # npm run dist: проверка типов → сборка окна и основной части → скачивание движка (с проверкой SHA-256) → установщик
+      - run: npm run dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tropa-windows
+          path: |
+            release/*.exe
+            release/*.zip
+          if-no-files-found: error

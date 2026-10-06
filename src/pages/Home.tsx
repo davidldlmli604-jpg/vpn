@@ -9,7 +9,7 @@ import { PowerButton } from '../components/PowerButton'
 import { RollingNumber } from '../components/RollingNumber'
 import { SpeedChart } from '../components/SpeedChart'
 import { Segmented, spotlight } from '../components/controls'
-import { Modal } from '../components/Overlays'
+import { AdminModal } from '../components/AdminModal'
 import { countryName, formatDuration, latencyClass, protocolLabel, splitBytes } from '../lib/format'
 import { useApp, vpn } from '../store'
 
@@ -51,7 +51,6 @@ export function Home(): ReactElement {
   const last = history[history.length - 1]
   const noServers = servers.length === 0
   const [askAdmin, setAskAdmin] = useState(false)
-  const [adminBusy, setAdminBusy] = useState(false)
 
   const onPower = async (): Promise<void> => {
     if (noServers && status === 'off') {
@@ -70,6 +69,7 @@ export function Home(): ReactElement {
   if (status === 'connecting') {
     title = conn.reconnect ? 'Связь оборвалась' : 'Подключаюсь'
     sub = conn.reconnect ? `Пробую подключиться снова (попытка ${conn.reconnect.attempt})` : 'Обычно это занимает несколько секунд'
+    if (conn.reconnect && conn.blocked) sub = `Интернет отключён защитой, пока VPN не вернётся. Пробую снова (попытка ${conn.reconnect.attempt})`
   }
   if (status === 'on') {
     title = conn.degraded ? 'Нет связи с сервером' : 'Работает'
@@ -105,6 +105,12 @@ export function Home(): ReactElement {
         <div data-hint={powerHint(status, noServers)}>
           <PowerButton status={status} onClick={() => void onPower()} noServers={noServers} />
         </div>
+        {conn.blocked && (
+          <div className="blocked-note" role="status" data-hint="Защита сработала: связь с VPN пропала, и она намеренно держит интернет закрытым, чтобы ничего не ушло мимо VPN. Откроется само, когда VPN вернётся.">
+            <Icon name="shield-check" size={18} />
+            <span>Защита держит интернет закрытым, пока VPN не вернётся. Нужен интернет без VPN — «Защита» → «Починить интернет».</span>
+          </div>
+        )}
         <div className="mode">
           <Segmented
             label="Режим работы"
@@ -211,33 +217,7 @@ export function Home(): ReactElement {
 
         {status === 'on' && !conn.degraded && <CheckCard report={check} />}
       </div>
-      <Modal
-        open={askAdmin}
-        onClose={() => !adminBusy && setAskAdmin(false)}
-        title="Нужно разрешение администратора"
-        actions={
-          <>
-            <button className="btn btn--ghost" disabled={adminBusy} onClick={() => setAskAdmin(false)}>Не сейчас</button>
-            <button
-              className="btn btn--primary"
-              disabled={adminBusy}
-              onClick={async () => {
-                setAdminBusy(true)
-                try {
-                  const r = await vpn().requestTunMode()
-                  pushToast({ kind: r.ok ? 'success' : 'warn', text: r.message })
-                  if (!r.relaunching) setAskAdmin(false)
-                } finally { setAdminBusy(false) }
-              }}
-            >
-              {adminBusy ? <span className="spinner" /> : <Icon name="shield-check" size={17} />} Разрешить
-            </button>
-          </>
-        }
-      >
-        <p>Режим «Весь компьютер» пускает через VPN <b>весь интернет</b> — даже программы и игры, которые ничего не знают про VPN. Чтобы Windows это позволила, программа должна работать с правами администратора.</p>
-        <p style={{ marginTop: 10 }}>Windows спросит <b>один раз</b>. Дальше программа будет запускаться сама, без вопросов. Ваши файлы и пароли это не затрагивает, а разрешение можно забрать в «Настройках».</p>
-      </Modal>
+      <AdminModal open={askAdmin} onClose={() => setAskAdmin(false)} />
     </div>
   )
 }

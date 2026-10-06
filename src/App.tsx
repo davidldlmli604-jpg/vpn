@@ -2,9 +2,11 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, type ReactElement } from 'react'
 import { Aurora } from './components/Aurora'
 import { Toasts } from './components/Overlays'
+import { Wizard } from './components/Wizard'
 import { Sidebar, TitleBar } from './components/Shell'
 import { Bypass } from './pages/Bypass'
 import { Home } from './pages/Home'
+import { Protection } from './pages/Protection'
 import { Servers } from './pages/Servers'
 import { Settings } from './pages/Settings'
 import { useApp, vpn } from './store'
@@ -63,6 +65,7 @@ export function App(): ReactElement {
   const ready = useApp((s) => s.ready)
   const fatal = useApp((s) => s.fatal)
   const page = useApp((s) => s.page)
+  const wizardDone = useApp((s) => s.app?.settings.wizardDone ?? true)
   const init = useApp((s) => s.init)
   useRootAttributes()
   usePasteKey(ready)
@@ -73,7 +76,12 @@ export function App(): ReactElement {
     <div className="app">
       <Aurora />
       <TitleBar />
-      {ready ? (
+      {ready && !wizardDone ? (
+        <>
+          <Wizard />
+          <Toasts />
+        </>
+      ) : ready ? (
         <>
           <Sidebar />
           <main className="main">
@@ -82,6 +90,7 @@ export function App(): ReactElement {
                 {page === 'home' && <Home />}
                 {page === 'servers' && <Servers />}
                 {page === 'bypass' && <Bypass />}
+                {page === 'protection' && <Protection />}
                 {page === 'settings' && <Settings />}
               </motion.div>
             </AnimatePresence>

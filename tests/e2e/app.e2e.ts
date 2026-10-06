@@ -26,18 +26,31 @@ let dir: string
 const LOG = process.env.E2E_LOG
 const step = (m: string): void => { if (LOG) require('node:fs').appendFileSync(LOG, `${new Date().toISOString().slice(11, 23)} ${m}\n`) }
 
-async function launch(): Promise<void> {
-  app = await electron.launch({
+async function launchApp(userDataDir: string, extra: { args?: string[]; env?: Record<string, string> } = {}): Promise<{ app: ElectronApplication; win: Page }> {
+  const application = await electron.launch({
     executablePath: join(ROOT, 'node_modules', 'electron', 'dist', 'electron'),
     // флаги: окно без оконного менеджера считалось бы скрытым, и кадры (а с ними и анимации) не рисовались бы
-    args: ['--no-sandbox', '--disable-gpu', '--no-proxy-server', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--disable-features=CalculateNativeWinOcclusion', ROOT],
-    env: { ...process.env, TROPA_USER_DATA: userData, ELECTRON_DISABLE_SECURITY_WARNINGS: '1' } as Record<string, string>,
+    args: ['--no-sandbox', '--disable-gpu', '--no-proxy-server', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--disable-features=CalculateNativeWinOcclusion', ROOT, ...(extra.args ?? [])],
+    env: { ...process.env, TROPA_USER_DATA: userDataDir, ELECTRON_DISABLE_SECURITY_WARNINGS: '1', ...(extra.env ?? {}) } as Record<string, string>,
     timeout: 60000
   })
   // Только для этой проверки на Linux (там нет связки ключей): упрощённое хранилище. В Windows используется настоящее шифрование системы.
-  await app.evaluate(({ safeStorage }) => safeStorage.setUsePlainTextEncryption(true))
-  win = await app.firstWindow()
-  win.on('pageerror', (e) => console.error('ошибка окна:', e.message))
+  await application.evaluate(({ safeStorage }) => safeStorage.setUsePlainTextEncryption(true))
+  const window = await application.firstWindow()
+  window.on('pageerror', (e) => console.error('ошибка окна:', e.message))
+  return { app: application, win: window }
+}
+
+/** Папка данных, в которой мастер первого запуска уже пройден (чтобы остальные проверки сразу видели главный экран). */
+function seedUserData(dirPath: string): void {
+  mkdirSync(dirPath, { recursive: true })
+  writeFileSync(join(dirPath, 'data.json'), JSON.stringify({ version: 1, settings: { wizardDone: true }, servers: [], subscriptions: [], rulesUpdatedAt: null, runtime: {} }))
+}
+
+async function launch(): Promise<void> {
+  const r = await launchApp(userData)
+  app = r.app
+  win = r.win
   await win.waitForSelector('.sidebar', { timeout: 30000 })
 }
 
@@ -56,6 +69,7 @@ beforeAll(async () => {
   mkdirSync(SHOTS, { recursive: true })
   dir = tempDir('tropa-e2e-')
   userData = join(dir, 'userdata')
+  seedUserData(userData)
   target = await startTarget(REPLY)
   serverPort = await freePort()
   server = new Box('server', {
@@ -179,8 +193,10 @@ describe('Шелти-помощник', () => {
     await win.getByRole('button', { name: 'Главная' }).first().click({ force: true })
     await win.waitForSelector('.power__face')
     expect(await win.locator('.assistant__dog').count()).toBe(1)
+    await new Promise((r) => setTimeout(r, 900)) // страница ещё «въезжает»: пока она движется, мышь попала бы мимо кнопки
+    const sees = (): Promise<unknown> => win.waitForFunction(() => /кнопк|VPN/i.test(document.querySelector('.bubble')?.textContent ?? ''), null, { timeout: 4000, polling: 200 })
     await hoverOn('.power__face')
-    await win.waitForFunction(() => /кнопк|VPN/i.test(document.querySelector('.bubble')?.textContent ?? ''), null, { timeout: 8000, polling: 200 })
+    await sees().catch(async () => { await hoverOn('.power__face'); await sees() }) // один повтор на случай, если нагруженная машина пропустила движение мыши
     expect(await win.locator('.bubble').innerText()).toContain('ШЕЛТИ')
     await shot('real-4-sheltie-hint')
   })
@@ -482,6 +498,108 @@ describe('вставка по Ctrl+V', () => {
     await win.getByRole('button', { name: 'Серверы' }).first().click({ force: true })
     await win.waitForSelector('.server')
     expect(await win.locator('.server').count()).toBe(before + 1)
+  })
+})
+
+describe('первый запуск: мастер из трёх шагов', () => {
+  let wApp: ElectronApplication
+  let w: Page
+  let wData: string
+  const press = (selector: string): Promise<void> => w.locator(selector).first().evaluate((el) => (el as HTMLElement).click())
+  const pressText = (text: string): Promise<void> => w.getByText(text, { exact: false }).first().evaluate((el) => ((el.closest('button') ?? el) as HTMLElement).click())
+
+  afterAll(async () => { await wApp?.close().catch(() => undefined) })
+
+  it('при чистой установке открывается мастер, а не главный экран', async () => {
+    wData = join(dir, 'userdata-wizard')
+    const r = await launchApp(wData)
+    wApp = r.app
+    w = r.win
+    await w.waitForSelector('.wizard', { timeout: 30000 })
+    expect(await w.locator('.sidebar').count()).toBe(0)
+    expect(await w.locator('.wizard__title').innerText()).toBe('Добавьте ключ')
+    expect(await w.locator('.wizard__nav .btn').innerText()).toContain('У меня пока нет ключа') // без ключа дальше можно только «пропустить»
+  })
+
+  it('шаг 1: ключ из буфера добавляется, появляется подтверждение с названием сервера', async () => {
+    await wApp.evaluate(({ clipboard }, text) => clipboard.writeText(text), key)
+    await pressText('Вставить ключ или подписку')
+    await w.waitForSelector('.wizard__ok', { timeout: 10000 })
+    expect(await w.locator('.wizard__ok').innerText()).toContain('Нидерланды · тест')
+    expect(await w.locator('.wizard__nav .btn--primary').innerText()).toContain('Дальше')
+  })
+
+  it('шаг 2: два режима, «Браузер и программы» уже выбран и подписан как рекомендуемый', async () => {
+    await pressText('Дальше')
+    await w.waitForSelector('.modecard')
+    expect(await w.locator('.wizard__title').innerText()).toContain('Что пускать через VPN')
+    expect(await w.locator('.modecard').count()).toBe(2)
+    expect(await w.locator('.modecard[aria-checked="true"]').innerText()).toContain('Браузер и программы')
+    expect(await w.locator('.modecard').first().innerText()).toContain('Рекомендуем для начала')
+    await shot('real-11-wizard-mode')
+  })
+
+  it('шаг 3: большая кнопка включает VPN прямо в мастере, а «Начать пользоваться» открывает программу', async () => {
+    await pressText('Дальше')
+    await w.waitForSelector('.wizard__power')
+    await new Promise((r) => setTimeout(r, 700))
+    await press('.power__face')
+    await w.waitForFunction(() => document.querySelector('.wizard__title')?.textContent === 'Всё работает!', null, { timeout: 30000, polling: 200 })
+    await new Promise((r) => setTimeout(r, 1500))
+    await pressText('Начать пользоваться')
+    await w.waitForSelector('.sidebar', { timeout: 10000 })
+    expect(await w.locator('.wizard').count()).toBe(0)
+    await w.waitForFunction(() => document.querySelector('.mini-status__title')?.textContent === 'Работает', null, { timeout: 10000, polling: 200 })
+  })
+
+  it('мастер больше не появляется после перезапуска, а сервер и выбор на месте', async () => {
+    await new Promise((r) => setTimeout(r, 800)) // настройки сохраняются с небольшой задержкой
+    await wApp.close()
+    const saved = JSON.parse(readFileSync(join(wData, 'data.json'), 'utf8'))
+    expect(saved.settings.wizardDone).toBe(true)
+    const r = await launchApp(wData)
+    wApp = r.app
+    w = r.win
+    await w.waitForSelector('.sidebar', { timeout: 30000 })
+    expect(await w.locator('.wizard').count()).toBe(0)
+    expect(await w.locator('.server-hero__name').innerText()).toBe('Нидерланды · тест')
+  })
+})
+
+describe('запуск свёрнутым (автозапуск с Windows)', () => {
+  it('с признаком «свёрнуто» окно не показывается, а программа работает; без него — показывается', async () => {
+    const hiddenData = join(dir, 'userdata-hidden')
+    seedUserData(hiddenData)
+    // значок в трее на Linux создаётся только по специальной переменной; без значка окно показалось бы, чтобы человек не потерял программу
+    const r = await launchApp(hiddenData, { args: ['--hidden'], env: { TROPA_FORCE_TRAY: '1' } })
+    try {
+      await new Promise((res) => setTimeout(res, 2500))
+      expect(await r.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(false)
+      // программа при этом жива и отвечает: окно можно показать «из трея»
+      await r.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.show())
+      await r.win.waitForSelector('.sidebar', { timeout: 10000 })
+    } finally {
+      await r.app.close().catch(() => undefined)
+    }
+    const shown = await launchApp(join(dir, 'userdata-hidden'), { env: { TROPA_FORCE_TRAY: '1' } })
+    try {
+      await new Promise((res) => setTimeout(res, 2000))
+      expect(await shown.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(true)
+    } finally {
+      await shown.app.close().catch(() => undefined)
+    }
+  })
+
+  it('свёрнутый запуск без значка в трее: окно всё равно показывается (иначе программу нельзя было бы найти)', async () => {
+    const noTray = join(dir, 'userdata-notray')
+    seedUserData(noTray)
+    const r = await launchApp(noTray, { args: ['--hidden'] }) // на Linux без TROPA_FORCE_TRAY значка нет
+    try {
+      await new Promise((res) => setTimeout(res, 2000))
+      expect(await r.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(true)
+    } finally {
+      await r.app.close().catch(() => undefined)
+    }
   })
 })
 

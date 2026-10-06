@@ -22,11 +22,12 @@ function sampleApps(...rows: Array<[string, string]>): RunningApp[] {
 export function createMockApi(): VpnApi {
   let settings: Settings = mergeSettings({
     ...DEFAULT_SETTINGS,
-    wizardDone: true,
+    wizardDone: q.get('wizard') !== '1',
     theme: (q.get('theme') as Settings['theme']) ?? 'dark',
     palette: (q.get('palette') as Settings['palette']) ?? 'aurora',
     mode: (q.get('mode') as Settings['mode']) ?? 'proxy',
-    motion: (q.get('motion') as Settings['motion']) ?? 'full'
+    motion: (q.get('motion') as Settings['motion']) ?? 'full',
+    killSwitch: q.get('ks') === '1'
   })
   const empty = q.get('empty') === '1'
   const servers: ServerView[] = empty
@@ -43,7 +44,7 @@ export function createMockApi(): VpnApi {
   ]
 
   let app: AppState = {
-    conn: { status: 'off', error: null, serverId: null, since: null, reconnect: null, degraded: false, mode: null },
+    conn: { status: 'off', error: null, serverId: null, since: null, reconnect: null, degraded: false, mode: null, blocked: false },
     exit: { checking: false, countryCode: null, countryName: null, ip: null, error: null },
     servers,
     subscriptions: subs,
@@ -201,6 +202,17 @@ export function createMockApi(): VpnApi {
       toast('success', 'Режим «Весь компьютер» включён.')
       return { ok: true, message: 'Режим «Весь компьютер» включён.', relaunching: false }
     },
+    resetAdvanced: async () => { app = { ...app, settings: mergeSettings({ ...app.settings, advanced: DEFAULT_SETTINGS.advanced }) }; emit(); toast('success', 'Настройки для специалиста сброшены к стандартным.') },
+    getLogs: async () => ['12:01:07 [программа] Подключение при запуске программы', '12:01:09 [движок] INFO inbound/mixed[mixed-in]: tcp server started at 127.0.0.1:7890', '12:01:09 [движок] INFO sing-box started (0.31s)', '12:01:10 [программа] Событие: connected', '12:01:24 [программа] Проверка «всё ли работает»: ok'],
+    clearLogs: async () => undefined,
+    getConfigPreview: async () => ({ note: 'Так будут выглядеть настройки при подключении · режим «Браузер и программы» · сервер «Нидерланды · Амстердам». Секреты скрыты; порты управления подставятся при запуске.', json: JSON.stringify({ log: { level: 'info' }, dns: { final: 'dns-remote' }, inbounds: [{ type: 'mixed', tag: 'mixed-in', listen: '127.0.0.1', listen_port: 7890 }], outbounds: [{ type: 'vless', tag: 'proxy', server: 'nl-1.example.net', server_port: 443, uuid: '••••••••' }, { type: 'direct', tag: 'direct' }], route: { final: 'proxy' } }, null, 2) }),
+    copyText: async () => undefined,
+    recoverInternet: async () => {
+      await new Promise((r) => setTimeout(r, 600))
+      app = { ...app, conn: { ...app.conn, status: 'off', blocked: false, error: null } }
+      emit()
+      return { ok: true, message: 'Готово: VPN выключен, все ограничения сняты. Если интернета всё равно нет — проверьте роутер или провайдера.' }
+    },
     revokeElevation: async () => {
       app = { ...app, settings: { ...app.settings, mode: 'proxy' }, system: { ...app.system, isAdmin: false, elevationReady: false } }
       emit()
@@ -226,6 +238,7 @@ export function createMockApi(): VpnApi {
   const scene = q.get('scene')
   if (scene === 'on') void connect('s1')
   if (scene === 'check') void connect('s1').then(() => new Promise((r) => setTimeout(r, 400))).then(() => runCheck())
+  if (scene === 'blocked') { app = { ...app, conn: { ...app.conn, status: 'connecting', serverId: 's1', mode: settings.mode, blocked: true, reconnect: { attempt: 2, nextInMs: 3000 }, error: { code: 'exited', title: 'Подключение оборвалось', text: '' } } } }
   if (scene === 'connecting') { app = { ...app, conn: { ...app.conn, status: 'connecting', serverId: 's1', mode: settings.mode } } }
   if (scene === 'error') { app = { ...app, conn: { ...app.conn, status: 'error', serverId: 's1', error: { code: 'server-silent', title: 'Сервер не отвечает', text: 'Возможно, ключ устарел или введён с ошибкой. Если ключ точно рабочий, попробуйте другой сервер из списка или повторите позже.' } } } }
   return api
