@@ -39,19 +39,26 @@ const scenes = [
   { name: 'sheltie-hint-power', q: 'scene=off', wait: 1500, hover: '.power__face', hoverWait: 3400 },
   { name: 'sheltie-hint-tile', q: 'scene=on&uptime=300', wait: 4500, hover: '.tile', hoverWait: 3400 },
   { name: 'sheltie-error-light', q: 'scene=error&palette=sunset&theme=light', wait: 2200 },
+  { name: 'bypass', q: 'scene=off', page: 'Мимо VPN', wait: 1600, height: 1100 },
+  { name: 'bypass-picker', q: 'scene=off', page: 'Мимо VPN', wait: 1400, click: 'Выбрать из запущенных', afterClick: 1200 },
+  { name: 'admin-modal', q: 'scene=off', wait: 1200, click: 'Весь компьютер', afterClick: 1200 },
   { name: 'servers-sunset-light', q: 'scene=on&palette=sunset&theme=light', page: 'Серверы', wait: 1500 }
 ]
 const only = process.argv.slice(2)
 try {
 for (const s of scenes) {
   if (only.length && !only.includes(s.name)) continue
-  const page = await browser.newPage({ viewport: { width: 1040, height: 720 }, deviceScaleFactor: 1.25 })
+  const page = await browser.newPage({ viewport: { width: 1040, height: s.height ?? 720 }, deviceScaleFactor: 1.25 })
   page.on('pageerror', (e) => console.error(`[${s.name}] ошибка страницы:`, e.message))
   page.on('console', (m) => { if (m.type() === 'error') console.error(`[${s.name}] console:`, m.text()) })
   await page.goto(`${base}?${s.q}`, { waitUntil: 'domcontentloaded', timeout: 20000 })
   await page.waitForSelector('.app .sidebar', { timeout: 15000 })
   if (s.page) { await page.getByRole('button', { name: s.page }).first().click() }
   await page.waitForTimeout(s.wait)
+  if (s.click) {
+    await page.getByText(s.click).first().evaluate((el) => (el.closest('button') ?? el).click())
+    await page.waitForTimeout(s.afterClick ?? 1000)
+  }
   if (s.hover) {
     const b = await page.locator(s.hover).first().boundingBox()
     await page.mouse.move(b.x + b.width / 2 - 20, b.y + b.height / 2 - 20)

@@ -1,5 +1,6 @@
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useIsPresent } from 'framer-motion'
 import { useEffect, type ReactElement, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useApp } from '../store'
 import { Icon } from './Icon'
 
@@ -40,17 +41,25 @@ export function Modal({ open, onClose, title, children, actions }: { open: boole
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
-  return (
+  // выносим окно в отдельный слой поверх всего: внутри области страниц «фиксированное» окно закрывало бы только её
+  return createPortal(
     <AnimatePresence>
-      {open && (
-        <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-          <motion.div className="modal" role="dialog" aria-modal="true" aria-label={title} initial={{ opacity: 0, y: 24, scale: 0.94 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: 0.97 }} transition={{ type: 'spring', stiffness: 380, damping: 30 }}>
-            <h2 className="modal__title">{title}</h2>
-            <div className="modal__text">{children}</div>
-            <div className="modal__actions">{actions}</div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+      {open && <ModalLayer onClose={onClose} title={title} actions={actions}>{children}</ModalLayer>}
+    </AnimatePresence>,
+    document.body
+  )
+}
+
+/** Пока окно гаснет после закрытия, оно уже не должно перехватывать нажатия — иначе первый клик по меню «проглатывается». */
+function ModalLayer({ onClose, title, children, actions }: { onClose: () => void; title: string; children: ReactNode; actions: ReactNode }): ReactElement {
+  const present = useIsPresent()
+  return (
+    <motion.div className="modal-backdrop" style={{ pointerEvents: present ? 'auto' : 'none' }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <motion.div className="modal" role="dialog" aria-modal="true" aria-label={title} initial={{ opacity: 0, y: 24, scale: 0.94 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: 0.97 }} transition={{ type: 'spring', stiffness: 380, damping: 30 }}>
+        <h2 className="modal__title">{title}</h2>
+        <div className="modal__text">{children}</div>
+        <div className="modal__actions">{actions}</div>
+      </motion.div>
+    </motion.div>
   )
 }

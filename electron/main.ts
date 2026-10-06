@@ -1,10 +1,12 @@
 // Точка входа приложения: окно, шифрование системой, связь окна с контроллером.
-import { app, BrowserWindow, clipboard, ipcMain, Notification, safeStorage, shell, nativeTheme } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, Notification, safeStorage, shell, nativeTheme, nativeImage } from 'electron'
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import brand from '../brand.json'
 import { IPC, INVOKABLE } from '../shared/api'
 import { AppController, type Host } from './controller'
 import { Elevation } from './platform/elevation'
+import { notifyExisting, startControl, waitUntilFree, type ControlHandle } from './platform/singleInstance'
 import type { Sealer } from './store'
 
 // Название задаётся в одном месте — brand.json. Папку данных привязываем к неизменному id,
@@ -29,6 +31,7 @@ process.on('unhandledRejection', (e) => {
 let win: BrowserWindow | null = null
 let controller: AppController | null = null
 let quitting = false
+let control: ControlHandle | null = null
 /** Появится вместе с трей-значком (этап 4). Пока значка нет — крестик закрывает программу. */
 let trayReady = false
 
@@ -78,7 +81,24 @@ const host: Host = {
     quitting = true
     app.quit()
   },
-  isAdmin: () => elevation.isElevated()
+  isAdmin: () => elevation.isElevated(),
+  exePath: process.execPath,
+  elevation: {
+    taskExists: () => elevation.taskExists(),
+    createTask: (exe, args) => elevation.createTask(exe, args),
+    deleteTask: () => elevation.deleteTask(),
+    runTask: () => elevation.runTask()
+  },
+  releaseControl: () => { control?.close(); control = null },
+  fileIcon: async (path) => {
+    try {
+      const img = await app.getFileIcon(path, { size: 'normal' })
+      return img.isEmpty() ? null : img.resize({ width: 32, height: 32 }).toDataURL()
+    } catch { return null }
+  },
+  readShortcut: (path) => {
+    try { return shell.readShortcutLink(path).target || null } catch { return null }
+  }
 }
 
 function createWindow(): BrowserWindow {
@@ -149,49 +169,64 @@ function registerIpc(c: AppController): void {
   c.onNavigate((p) => win?.webContents.send(IPC.navigate, p))
 }
 
-// Одна копия программы: вторая просто показывает окно первой.
-const gotLock = app.requestSingleInstanceLock()
-if (!gotLock) {
-  app.quit()
-} else {
-  app.on('second-instance', () => {
-    if (!win) return
-    if (win.isMinimized()) win.restore()
-    win.show()
-    win.focus()
-  })
-
-  void app.whenReady().then(async () => {
-    controller = new AppController(
-      host,
-      { userDir: app.getPath('userData'), engineExe: enginePath(), bundledRulesDir: bundledRulesPath() },
-      sealer
-    )
-    await controller.init()
-    registerIpc(controller)
-    win = createWindow()
-    app.on('activate', () => win?.show())
-  })
-
-  app.on('before-quit', (e) => {
-    if (quitting && controller) {
-      // даём движку и системным настройкам спокойно вернуться в исходное состояние
-      const c = controller
-      controller = null
-      e.preventDefault()
-      void c.shutdown().finally(() => {
-        quitting = true
-        app.exit(0)
-      })
-    } else {
-      quitting = true
-    }
-  })
-
-  app.on('window-all-closed', () => {
-    /* приложение живёт в трее; выход — явной командой */
-  })
+// Одна копия программы (см. platform/singleInstance.ts): вторая просто показывает окно первой — в том числе
+// первой, запущенной с правами администратора.
+function showWindow(): void {
+  if (!win) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
 }
 
-void shell
+void app.whenReady().then(async () => {
+  const userDir = app.getPath('userData')
+  mkdirSync(userDir, { recursive: true })
+  const elevatedLaunch = process.argv.includes('--elevated')
+  if (elevatedLaunch) {
+    // нас запустили с правами вместо прежней копии — ждём, пока она уйдёт
+    await waitUntilFree(userDir, 8000)
+  } else if (await notifyExisting(userDir)) {
+    app.exit(0)
+    return
+  }
+
+  controller = new AppController(host, { userDir, engineExe: enginePath(), bundledRulesDir: bundledRulesPath() }, sealer)
+  await controller.init()
+
+  // Выбран режим «весь компьютер», а мы без прав, и разрешение уже выдано: запускаем себя с правами и уходим.
+  if (!elevatedLaunch && controller.needsElevatedRelaunch) {
+    if (await controller.relaunchElevated()) {
+      app.exit(0)
+      return
+    }
+  }
+
+  control = await startControl(userDir, showWindow)
+  registerIpc(controller)
+  win = createWindow()
+  app.on('activate', () => win?.show())
+})
+
+// Очистка при ЛЮБОМ выходе (крестик, «Выйти», завершение работы системы): остановить движок, вернуть системный прокси.
+// Без этого движок остался бы в фоне, а прокси Windows — включённым «в никуда», и пропал бы интернет.
+let shuttingDown = false
+app.on('before-quit', (e) => {
+  quitting = true
+  if (shuttingDown || !controller) return
+  shuttingDown = true
+  e.preventDefault()
+  control?.close()
+  const c = controller
+  void c.shutdown().catch(() => undefined).finally(() => {
+    controller = null
+    app.exit(0)
+  })
+})
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(sig, () => app.quit())
+
+app.on('window-all-closed', () => {
+  /* приложение живёт в трее; выход — явной командой */
+})
+
 void trayReady
+void nativeImage

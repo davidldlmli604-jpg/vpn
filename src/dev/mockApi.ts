@@ -2,7 +2,7 @@
 // В настоящем приложении не используется: там окно общается с настоящим движком.
 import type { ToastMessage, VpnApi } from '@shared/api'
 import { DEFAULT_SETTINGS, mergeSettings } from '@shared/defaults'
-import type { AddResult, AppState, ServerView, Settings, StatsSample } from '@shared/types'
+import type { AddResult, AppState, RunningApp, ServerView, Settings, StatsSample } from '@shared/types'
 
 const q = new URLSearchParams(location.search)
 
@@ -14,6 +14,10 @@ const SAMPLE: Array<[string, string, string, string]> = [
   ['Япония · Токио', 'jp', 'tuic', 'jp-1.example.net'],
   ['Турция · Стамбул', 'tr', 'vmess', 'tr-1.example.net']
 ]
+
+function sampleApps(...rows: Array<[string, string]>): RunningApp[] {
+  return rows.map(([name, exe]) => ({ name, exe, path: `C:\\Program Files\\${name}\\${exe}`, icon: null }))
+}
 
 export function createMockApi(): VpnApi {
   let settings: Settings = mergeSettings({
@@ -132,6 +136,30 @@ export function createMockApi(): VpnApi {
 
     updateSettings: async (patch) => { app = { ...app, settings: mergeSettings({ ...app.settings, ...patch }) }; emit(); if (patch.mode) toast('success', 'Настройки применены') },
     updateAdvanced: async (patch) => { app = { ...app, settings: mergeSettings({ ...app.settings, advanced: { ...app.settings.advanced, ...patch } }) }; emit() },
+
+    requestTunMode: async () => {
+      await new Promise((r) => setTimeout(r, 900))
+      app = { ...app, settings: { ...app.settings, mode: 'tun' }, system: { ...app.system, isAdmin: true, elevationReady: true } }
+      emit()
+      toast('success', 'Режим «Весь компьютер» включён.')
+      return { ok: true, message: 'Режим «Весь компьютер» включён.', relaunching: false }
+    },
+    revokeElevation: async () => {
+      app = { ...app, settings: { ...app.settings, mode: 'proxy' }, system: { ...app.system, isAdmin: false, elevationReady: false } }
+      emit()
+      return { ok: true, message: 'Разрешение отозвано.' }
+    },
+    listRunningApps: async () => sampleApps(['Google Chrome', 'chrome.exe'], ['Steam', 'steam.exe'], ['Discord', 'Discord.exe'], ['Telegram Desktop', 'Telegram.exe'], ['Яндекс Музыка', 'YandexMusic.exe'], ['Spotify', 'Spotify.exe']),
+    listInstalledApps: async () => sampleApps(['Epic Games Launcher', 'EpicGamesLauncher.exe'], ['Battle.net', 'Battle.net.exe'], ['Mozilla Firefox', 'firefox.exe'], ['OBS Studio', 'obs64.exe'], ['qBittorrent', 'qbittorrent.exe']),
+    updateRules: async () => {
+      app = { ...app, system: { ...app.system, rules: { ...app.system.rules, updating: true } } }
+      emit()
+      await new Promise((r) => setTimeout(r, 1500))
+      app = { ...app, system: { ...app.system, rules: { updatedAt: Date.now(), count: 31, updating: false, bundledOnly: false } } }
+      emit()
+      toast('success', 'Списки обновлены. Применятся при следующем подключении.')
+      return { ok: true, message: 'Списки обновлены.' }
+    },
 
     windowAction: async () => undefined,
     quit: async () => undefined

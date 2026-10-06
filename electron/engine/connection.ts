@@ -41,6 +41,8 @@ export interface ConnectionDeps {
   timing?: Partial<Timing>
   /** Адреса для проверки связи (по умолчанию — общеизвестные «204»-страницы). Нужно в основном тестам. Только обычный http. */
   probeUrls?: string[]
+  /** Запоминает pid движка (или null, когда остановлен) — чтобы после аварийного завершения программы убрать забытый процесс. */
+  recordEngine?(pid: number | null): void
   /** Последняя правка конфига перед запуском. Нужно в основном тестам. */
   configTransform?(config: Record<string, unknown>): Record<string, unknown>
 }
@@ -232,6 +234,7 @@ export class ConnectionManager {
     proc.on('line', (l: string) => this.onEngineLine(l))
     proc.on('exit', (e: EngineExit) => this.onEngineExit(proc, e))
     proc.start()
+    this.deps.recordEngine?.(proc.pid ?? null)
 
     const started = Date.now()
     while (Date.now() - started < this.timing.readyTimeoutMs) {
@@ -456,7 +459,10 @@ export class ConnectionManager {
     const p = this.proc
     this.proc = null
     this.clash = null
-    if (p) await p.stop()
+    if (p) {
+      await p.stop()
+      this.deps.recordEngine?.(null)
+    }
     if (removeConfig && this.configPath) {
       try { rmSync(this.configPath, { force: true }) } catch { /* ничего */ }
     }

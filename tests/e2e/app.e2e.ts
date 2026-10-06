@@ -9,7 +9,8 @@ import { Box, freePort, httpViaProxy, removeDir, startTarget, tempDir } from '..
 import { UUID } from '../fixtures'
 
 const ROOT = resolve(__dirname, '..', '..')
-const SHOTS = process.env.SHOTS_DIR ?? join(ROOT, 'docs', 'screenshots')
+// скриншоты настоящего окна по умолчанию уходят во временную папку; в docs/screenshots — только если задать SHOTS_DIR
+const SHOTS = process.env.SHOTS_DIR ?? join(require('node:os').tmpdir(), 'tropa-e2e-shots')
 const REPLY = 'ответ-через-настоящее-приложение'
 const b64url = (s: string): string => Buffer.from(s).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 
@@ -208,6 +209,110 @@ describe('Шелти-помощник', () => {
     await win.waitForFunction(() => document.querySelectorAll('.assistant__dog').length === 0, null, { timeout: 8000, polling: 200 })
     await press()
     await win.waitForFunction(() => document.querySelectorAll('.assistant__dog').length === 1, null, { timeout: 8000, polling: 200 })
+  })
+})
+
+
+describe('«Мимо VPN» в настоящем окне', () => {
+  const runtimeConfig = (): { route: { rules: Array<Record<string, unknown>>; rule_set?: unknown[] } } => JSON.parse(readFileSync(join(userData, 'runtime', 'config.json'), 'utf8'))
+  const press = (selector: string): Promise<void> => win.locator(selector).first().evaluate((el) => (el as HTMLElement).click())
+
+  it('выбираем рабочий сервер и открываем страницу', async () => {
+    await win.getByRole('button', { name: 'Серверы' }).first().click({ force: true })
+    await win.waitForSelector('.server')
+    await win.locator('.server:has-text("Нидерланды")').evaluate((el) => (el as HTMLElement).click())
+    await win.getByRole('button', { name: 'Мимо VPN' }).first().click({ force: true })
+    await win.waitForSelector('.rules-status')
+    await new Promise((r) => setTimeout(r, 700))
+    expect(await win.locator('.rules-status').innerText()).toContain('вшитые')
+    await shot('real-5-bypass')
+  })
+
+  it('программа из списка запущенных попадает в «мимо VPN», игровой набор включается', async () => {
+    await press('button:has-text("Выбрать из запущенных")')
+    await win.waitForSelector('.picker__row', { timeout: 20000 })
+    await win.locator('.picker input, input[placeholder="Поиск по названию"]').first().fill('sing-box')
+    await win.waitForSelector('.picker__row:has-text("sing-box")')
+    await win.locator('.picker__row:has-text("sing-box")').first().evaluate((el) => (el as HTMLElement).click())
+    await win.locator('.modal .btn--primary').evaluate((el) => (el as HTMLElement).click())
+    await win.waitForSelector('.app-chip:has-text("sing-box")')
+    await win.locator('button[role="switch"][aria-label="Игры и лаунчеры"]').evaluate((el) => (el as HTMLElement).click())
+    await win.waitForFunction(() => document.querySelector('button[role="switch"][aria-label="Игры и лаунчеры"]')?.getAttribute('aria-checked') === 'true', null, { timeout: 5000, polling: 200 })
+  })
+
+  it('свои списки приводятся в порядок: адрес со страницей, кириллица, звёздочка, IP', async () => {
+    const [vpnBox, directBox] = await win.locator('.textarea').all()
+    await vpnBox!.fill('https://www.Пример.рф/страница?x=1\nblocked-but-ru.ru')
+    await vpnBox!.evaluate((el) => (el as HTMLTextAreaElement).blur())
+    await directBox!.fill('*.my-bank.example.org, 203.0.113.99, мусор!!!')
+    await directBox!.evaluate((el) => (el as HTMLTextAreaElement).blur())
+    await win.waitForFunction(() => (document.querySelectorAll('.textarea')[0] as HTMLTextAreaElement).value.includes('xn--'), null, { timeout: 5000, polling: 200 })
+    expect(await vpnBox!.inputValue()).toBe('xn--e1afmkfd.xn--p1ai\nblocked-but-ru.ru')
+    expect(await directBox!.inputValue()).toBe('my-bank.example.org\n203.0.113.99/32')
+    expect(await win.locator('.domlist__foot .badge').allInnerTexts()).toEqual([expect.stringContaining('мусор')]) // «не понял: мусор!!!» подсказано человеку
+  })
+
+  it('после подключения движок получил именно эти правила', async () => {
+    await win.getByRole('button', { name: 'Главная' }).first().click({ force: true })
+    await win.waitForSelector('.power__face')
+    await new Promise((r) => setTimeout(r, 600))
+    await press('.power__face')
+    await waitStatus('Работает', 30000)
+    const cfg = runtimeConfig()
+    const rules = cfg.route.rules
+    const find = (pred: (r: Record<string, unknown>) => boolean): Record<string, unknown> | undefined => rules.find(pred)
+    // российские сайты напрямую: зоны + наборы
+    expect(find((r) => Array.isArray(r.domain_suffix) && (r.domain_suffix as string[]).includes('xn--p1ai') && r.outbound === 'direct')).toBeTruthy()
+    expect(cfg.route.rule_set!.length).toBe(31)
+    // программы мимо VPN: выбранная + игровой набор
+    const proc = find((r) => Array.isArray(r.process_name))!
+    expect(proc.outbound).toBe('direct')
+    expect(proc.process_name).toEqual(expect.arrayContaining(['sing-box', 'steam.exe', 'Steam.exe'.toLowerCase()]))
+    // свои списки: «всегда через VPN» главнее .ru и стоит раньше
+    const vpnRule = find((r) => Array.isArray(r.domain_suffix) && (r.domain_suffix as string[]).includes('xn--e1afmkfd.xn--p1ai'))!
+    expect(vpnRule.outbound).toBe('proxy')
+    const ruZone = find((r) => Array.isArray(r.domain_suffix) && (r.domain_suffix as string[]).includes('xn--p1ai') && r.outbound === 'direct')!
+    expect(rules.indexOf(vpnRule)).toBeLessThan(rules.indexOf(ruZone))
+    expect(find((r) => Array.isArray(r.ip_cidr) && (r.ip_cidr as string[]).includes('203.0.113.99/32'))!.outbound).toBe('direct')
+    // домашняя сеть — всегда напрямую
+    expect(find((r) => r.ip_is_private === true)!.outbound).toBe('direct')
+  })
+
+  it('выключаем «российские сайты напрямую»: подключение само перезапускается с новыми правилами', async () => {
+    await win.getByRole('button', { name: 'Мимо VPN' }).first().click({ force: true })
+    await win.waitForSelector('button[role="switch"][aria-label="Российские сайты напрямую"]')
+    await new Promise((r) => setTimeout(r, 600))
+    await press('button[role="switch"][aria-label="Российские сайты напрямую"]')
+    await win.waitForFunction(() => document.querySelector('button[role="switch"][aria-label="Российские сайты напрямую"]')?.getAttribute('aria-checked') === 'false', null, { timeout: 5000, polling: 200 })
+    // ждём, пока перезапустится: файл настроек обновится и без наборов правил
+    const t0 = Date.now()
+    let n = -1
+    while (Date.now() - t0 < 20000) {
+      try { n = (runtimeConfig().route.rule_set ?? []).length } catch { n = -1 }
+      if (n === 0) break
+      await new Promise((r) => setTimeout(r, 300))
+    }
+    expect(n).toBe(0)
+    await waitStatus('Работает', 20000)
+    const r = await httpViaProxy(JSON.parse(readFileSync(join(userData, 'runtime', 'config.json'), 'utf8')).inbounds.find((i: { type: string }) => i.type === 'mixed').listen_port, 'http://203.0.113.7:8080/')
+    expect(r.body).toBe(REPLY) // и после перезапуска трафик идёт
+    await win.getByRole('button', { name: 'Главная' }).first().click({ force: true })
+    await win.waitForSelector('.power__face')
+    await new Promise((res) => setTimeout(res, 600))
+    await press('.power__face')
+    await waitStatus('Выключено', 15000)
+  })
+
+  it('закрытие программы при включённом VPN: движок остановлен, настройки прокси не остались', async () => {
+    await press('.power__face')
+    await waitStatus('Работает', 30000)
+    const port = JSON.parse(readFileSync(join(userData, 'runtime', 'config.json'), 'utf8')).inbounds.find((i: { type: string }) => i.type === 'mixed').listen_port as number
+    const t0 = Date.now()
+    await app.close()
+    expect(Date.now() - t0).toBeLessThan(15000) // закрылась быстро, не «зависла»
+    await expect(httpViaProxy(port, 'http://203.0.113.7:8080/', 1500)).rejects.toBeTruthy() // порт закрыт — движок не остался в фоне
+    expect(existsSync(join(userData, 'runtime', 'config.json'))).toBe(false) // файл с секретами удалён
+    await launch() // чтобы общий «afterAll» мог закрыть приложение как обычно
   })
 })
 

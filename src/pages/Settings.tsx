@@ -94,6 +94,21 @@ export function Settings(): ReactElement {
         </div>
       </section>
 
+      {system.platform === 'win32' && (
+        <section className="section">
+          <h2 className="section__title">Права администратора</h2>
+          <div className="glass card">
+            <Setting name={system.elevationReady ? 'Разрешение выдано' : 'Разрешение не выдано'} tech="задача планировщика" hint={system.elevationReady ? 'Режим «Весь компьютер» запускается без вопросов. Если разрешение больше не нужно, его можно забрать.' : 'Понадобится только для режима «Весь компьютер»: Windows спросит один раз, когда вы его включите.'} help="Для режима «Весь компьютер» нужны права администратора. Программа просит их у Windows один раз и запоминает. Здесь это разрешение можно отозвать.">
+              {system.elevationReady ? (
+                <button className="btn btn--ghost btn--sm" onClick={() => void vpn().revokeElevation().then((r) => useApp.getState().pushToast({ kind: r.ok ? 'success' : 'warn', text: r.message }))}>Забрать разрешение</button>
+              ) : (
+                <span className="badge">не требуется</span>
+              )}
+            </Setting>
+          </div>
+        </section>
+      )}
+
       <section className="section">
         <h2 className="section__title">О программе</h2>
         <div className="glass card" style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>

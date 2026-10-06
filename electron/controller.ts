@@ -6,15 +6,18 @@ import { join } from 'node:path'
 import { parseInput } from '../core'
 import type { VpnApi, ToastMessage } from '../shared/api'
 import { DEFAULT_SETTINGS } from '../shared/defaults'
-import type { AddResult, AppState, ConnState, ExitInfo, Settings, StatsSample, SystemInfo } from '../shared/types'
+import type { AddResult, AppState, ConnState, ExitInfo, RunningApp, Settings, StatsSample, SystemInfo } from '../shared/types'
 import { ConnectionManager, initialConnState, type ConnectionEvent } from './engine/connection'
 import { NoopSystemProxy, WindowsSystemProxy, type SystemProxy } from './platform/systemProxy'
 import { KillSwitch } from './platform/killswitch'
 import { fetchExitInfo } from './services/ipcheck'
+import { killStaleEngine } from './engine/stale'
 import { AppLog } from './services/logger'
 import { RuleSets } from './services/rules'
-import { httpGet } from './services/http'
+import { httpGetWithFallback } from './services/http'
 import { DataStore, SecureStorageError, newId, type Sealer } from './store'
+import { cleanApps, findShortcuts, listRunning, startMenuDirs, toRunningApp, type RawApp } from './apps'
+import { basename } from 'node:path'
 
 export interface Host {
   platform: NodeJS.Platform
@@ -24,6 +27,21 @@ export interface Host {
   windowAction(action: 'minimize' | 'close' | 'hide-to-tray'): void
   quit(): void
   isAdmin(): Promise<boolean>
+  /** Путь к исполняемому файлу программы (для запуска с правами администратора). */
+  exePath: string
+  /** Права администратора: задача планировщика «запускать с наивысшими правами». */
+  elevation: {
+    taskExists(): Promise<boolean>
+    createTask(exePath: string, args: string): Promise<{ ok: boolean; cancelled: boolean }>
+    deleteTask(): Promise<boolean>
+    runTask(): Promise<boolean>
+  }
+  /** Освободить «замок единственной копии», чтобы новая копия (с правами) могла стать главной. */
+  releaseControl(): void
+  /** Иконка программы как картинка (data URL). */
+  fileIcon(path: string): Promise<string | null>
+  /** Цель ярлыка .lnk (куда он ведёт) или null. */
+  readShortcut(path: string): string | null
 }
 
 export interface ControllerPaths {
@@ -40,9 +58,14 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
   readonly log: AppLog
   readonly conn: ConnectionManager
   readonly rules: RuleSets
+  private systemProxy!: SystemProxy
+  private killSwitch!: KillSwitch
   private exit: ExitInfo = { checking: false, countryCode: null, countryName: null, ip: null, error: null }
   private engineVersion: string | null = null
   private admin = false
+  private elevationReady = false
+  private iconCache = new Map<string, string | null>()
+  private rulesTimer: NodeJS.Timeout | null = null
   private pushTimer: NodeJS.Timeout | null = null
   private restarting = false
   private restartTimer: NodeJS.Timeout | null = null
@@ -53,13 +76,13 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
   private toastListeners: Array<Listener<ToastMessage>> = []
   private navListeners: Array<Listener<string>> = []
 
-  constructor(readonly host: Host, readonly paths: ControllerPaths, sealer: Sealer, overrides: { systemProxy?: SystemProxy; fetchExit?: typeof fetchExitInfo } = {}) {
+  constructor(readonly host: Host, readonly paths: ControllerPaths, sealer: Sealer, overrides: { systemProxy?: SystemProxy; fetchExit?: typeof fetchExitInfo; ruleFetch?: (url: string) => Promise<Buffer> } = {}) {
     this.log = new AppLog(join(paths.userDir, 'logs', 'app.log'))
     this.store = new DataStore(join(paths.userDir, 'data.json'), sealer)
     this.rules = new RuleSets({
       userDir: join(paths.userDir, 'rules'),
       bundledDir: paths.bundledRulesDir,
-      fetch: async (url) => (await httpGet(url, { timeoutMs: 20000, maxBytes: 4 * 1024 * 1024 })).body,
+      fetch: overrides.ruleFetch ?? (async (url) => (await httpGetWithFallback(url, { timeoutMs: 20000, maxBytes: 4 * 1024 * 1024 }, this.conn?.isRunning ? this.conn.proxyPort : null)).body),
       getUpdatedAt: () => this.store.rulesUpdatedAt,
       setUpdatedAt: (t) => (this.store.rulesUpdatedAt = t),
       log: (l) => this.log.add(l)
@@ -71,11 +94,13 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
       (host.platform === 'win32'
         ? new WindowsSystemProxy({ load: () => this.store.runtimeGet('prevProxy'), save: (p) => this.store.runtimeSet('prevProxy', p) })
         : new NoopSystemProxy())
+    this.systemProxy = systemProxy
     const killSwitch = new KillSwitch({
       load: () => this.store.runtimeGet('killSwitch') ?? { active: false, previous: null },
       save: (s) => this.store.runtimeSet('killSwitch', s.active ? s : null)
     }, undefined, host.platform)
 
+    this.killSwitch = killSwitch
     const fetchExit = overrides.fetchExit ?? fetchExitInfo
     this.conn = new ConnectionManager({
       engineExe: paths.engineExe,
@@ -93,6 +118,7 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
         return { countryCode: r.countryCode, countryName: r.countryName, ip: r.ip, error: r.error }
       },
       log: (l) => this.log.add(l),
+      recordEngine: (pid) => this.store.runtimeSet('enginePid', pid),
       onEvent: (e) => this.onConnectionEvent(e)
     })
     this.conn.onState = (s) => this.onConnState(s)
@@ -107,9 +133,37 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
 
   /** Вызывается один раз при запуске приложения. */
   async init(): Promise<void> {
+    await this.recoverFromCrash()
     this.admin = await this.host.isAdmin()
+    this.elevationReady = await this.host.elevation.taskExists()
     void this.readEngineVersion()
     this.pushState()
+    // списки правил обновляются сами: при запуске (если устарели) и затем раз в несколько часов
+    const maybeUpdate = (): void => { if (this.rules.needsUpdate()) void this.updateRules(true) }
+    setTimeout(maybeUpdate, 25_000)
+    this.rulesTimer = setInterval(maybeUpdate, 6 * 3600_000)
+  }
+
+  // ---------------------------------------------------------------- после аварийного завершения
+
+  /**
+   * Если прошлый запуск закончился аварийно, после него могут остаться: забытый процесс движка и включённый
+   * «в никуда» системный прокси (тогда у человека пропал бы интернет). Здесь всё это аккуратно убирается.
+   */
+  async recoverFromCrash(): Promise<void> {
+    const pid = this.store.runtimeGet<number>('enginePid')
+    if (pid) {
+      if (await killStaleEngine(pid, this.host.platform, this.paths.engineExe)) this.log.add(`Остановил забытый движок от прошлого запуска (pid ${pid})`)
+      this.store.runtimeSet('enginePid', null)
+    }
+    if (this.store.runtimeGet('prevProxy') !== null) {
+      this.log.add('Прошлый запуск закончился аварийно: возвращаю настройки системного прокси')
+      try { await this.systemProxy.clear() } catch { /* ничего */ }
+    }
+    if (this.store.runtimeGet<{ active: boolean }>('killSwitch')?.active) {
+      this.log.add('Прошлый запуск закончился аварийно: возвращаю обычные правила сети')
+      try { await this.killSwitch.disarm() } catch { /* ничего */ }
+    }
   }
 
   // ---------------------------------------------------------------- подписки на события
@@ -157,7 +211,7 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
       platform: this.host.platform as SystemInfo['platform'],
       appVersion: this.host.appVersion,
       isAdmin: this.admin,
-      elevationReady: false,
+      elevationReady: this.elevationReady,
       singbox: { found: existsSync(this.paths.engineExe), version: this.engineVersion, path: this.paths.engineExe },
       secureStorage: this.store.secureAvailable,
       rules: this.rules.status(),
@@ -304,6 +358,109 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
     }
   }
 
+  // ---------------------------------------------------------------- режим «весь компьютер»
+
+  /** Нужно ли перезапуститься с правами администратора (вызывается при запуске программы). */
+  get needsElevatedRelaunch(): boolean {
+    return this.host.platform === 'win32' && this.store.settings.mode === 'tun' && !this.admin && this.elevationReady
+  }
+
+  async relaunchElevated(): Promise<boolean> {
+    this.host.releaseControl()
+    return this.host.elevation.runTask()
+  }
+
+  async requestTunMode(): Promise<{ ok: boolean; message: string; relaunching: boolean }> {
+    const done = (ok: boolean, message: string, relaunching = false): { ok: boolean; message: string; relaunching: boolean } => ({ ok, message, relaunching })
+    if (this.admin) {
+      await this.updateSettings({ mode: 'tun' })
+      return done(true, 'Режим «Весь компьютер» включён.')
+    }
+    if (this.host.platform !== 'win32') {
+      return done(false, 'Режим «Весь компьютер» работает только в Windows (на других системах — только с правами администратора).')
+    }
+    if (!(await this.host.elevation.taskExists())) {
+      this.log.add('Прошу у Windows разрешение запускаться с правами администратора')
+      const r = await this.host.elevation.createTask(this.host.exePath, '--elevated')
+      if (!r.ok) {
+        this.log.add(r.cancelled ? 'Разрешение не получено (отказ в окне Windows)' : 'Не удалось создать разрешение')
+        return done(false, r.cancelled
+          ? 'Разрешение не получено, поэтому режим «Весь компьютер» не включён. Ничего страшного — можно работать в режиме «Браузер и программы». Попробовать снова можно в любой момент.'
+          : 'Не удалось сохранить разрешение. Попробуйте ещё раз или запустите программу от имени администратора.')
+      }
+      this.elevationReady = true
+    }
+    // запоминаем выбор: новая копия, уже с правами, сама включится в нужном режиме
+    this.store.updateSettings({ mode: 'tun' })
+    this.store.flush()
+    await this.conn.shutdown()
+    if (!(await this.relaunchElevated())) {
+      this.pushState()
+      return done(false, 'Разрешение сохранено, но запустить программу с правами не получилось. Закройте программу и откройте её снова.')
+    }
+    setTimeout(() => this.host.quit(), 400)
+    return done(true, 'Перезапускаю программу с правами администратора…', true)
+  }
+
+  async revokeElevation(): Promise<{ ok: boolean; message: string }> {
+    if (this.host.platform !== 'win32') return { ok: false, message: 'Разрешение администратора есть только в Windows.' }
+    const ok = await this.host.elevation.deleteTask()
+    this.elevationReady = !ok ? await this.host.elevation.taskExists() : false
+    if (ok && this.store.settings.mode === 'tun' && !this.admin) await this.updateSettings({ mode: 'proxy' })
+    this.pushState()
+    return ok
+      ? { ok: true, message: 'Разрешение отозвано. Режим «Весь компьютер» снова будет просить его при включении.' }
+      : { ok: false, message: 'Не удалось отозвать разрешение (возможно, вы отказались в окне Windows).' }
+  }
+
+  // ---------------------------------------------------------------- программы и списки
+
+  private async iconFor(path: string | null): Promise<string | null> {
+    if (!path) return null
+    if (this.iconCache.has(path)) return this.iconCache.get(path)!
+    let icon: string | null = null
+    try { icon = await this.host.fileIcon(path) } catch { icon = null }
+    this.iconCache.set(path, icon)
+    return icon
+  }
+
+  private async withIcons(list: RawApp[]): Promise<RunningApp[]> {
+    const capped = list.slice(0, 300)
+    const icons = await Promise.all(capped.map((a) => this.iconFor(a.path)))
+    return capped.map((a, i) => toRunningApp(a, icons[i] ?? null))
+  }
+
+  async listRunningApps(): Promise<RunningApp[]> {
+    const raw = cleanApps(await listRunning(this.host.platform), { selfExe: this.host.exePath, platform: this.host.platform })
+    return this.withIcons(raw)
+  }
+
+  async listInstalledApps(): Promise<RunningApp[]> {
+    if (this.host.platform !== 'win32') return []
+    const found: RawApp[] = []
+    for (const dir of startMenuDirs()) {
+      for (const lnk of findShortcuts(dir)) {
+        const target = this.host.readShortcut(lnk)
+        if (target && /\.exe$/i.test(target)) found.push({ name: basename(lnk).replace(/\.lnk$/i, ''), path: target })
+      }
+    }
+    return this.withIcons(cleanApps(found, { selfExe: this.host.exePath, platform: this.host.platform }))
+  }
+
+  async updateRules(silent = false): Promise<{ ok: boolean; message: string }> {
+    this.pushState()
+    const r = await this.rules.update()
+    this.pushState()
+    if (r.updated === 0 && r.failed > 0) {
+      const message = 'Не удалось обновить списки: нет связи с GitHub. Работают прежние списки. Попробуйте позже или при включённом VPN.'
+      if (!silent) this.toast('warn', message)
+      return { ok: false, message }
+    }
+    const message = r.failed ? `Списки обновлены частично (${r.updated} из ${r.updated + r.failed}). Применятся при следующем подключении.` : 'Списки обновлены. Применятся при следующем подключении.'
+    if (!silent) this.toast('success', message)
+    return { ok: true, message }
+  }
+
   // ---------------------------------------------------------------- настройки
 
   async updateSettings(patch: Partial<Settings>): Promise<void> {
@@ -337,6 +494,7 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
 
   async shutdown(): Promise<void> {
     if (this.restartTimer) clearTimeout(this.restartTimer)
+    if (this.rulesTimer) clearInterval(this.rulesTimer)
     await this.conn.shutdown()
     this.store.flush()
   }

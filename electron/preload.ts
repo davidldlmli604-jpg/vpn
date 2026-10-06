@@ -28,6 +28,12 @@ const api: VpnApi = {
 
   connect: (serverId) => call('connect', serverId),
   disconnect: () => call('disconnect'),
+  requestTunMode: () => call('requestTunMode'),
+  revokeElevation: () => call('revokeElevation'),
+
+  listRunningApps: () => call('listRunningApps'),
+  listInstalledApps: () => call('listInstalledApps'),
+  updateRules: () => call('updateRules'),
 
   updateSettings: (patch) => call('updateSettings', patch),
   updateAdvanced: (patch) => call('updateAdvanced', patch),

@@ -8,6 +8,7 @@ import { PowerButton } from '../components/PowerButton'
 import { RollingNumber } from '../components/RollingNumber'
 import { SpeedChart } from '../components/SpeedChart'
 import { Segmented, spotlight } from '../components/controls'
+import { Modal } from '../components/Overlays'
 import { countryName, formatDuration, latencyClass, protocolLabel, splitBytes } from '../lib/format'
 import { useApp, vpn } from '../store'
 
@@ -48,6 +49,8 @@ export function Home(): ReactElement {
   const server = servers.find((s) => s.id === (conn.serverId ?? settings.selectedServerId)) ?? null
   const last = history[history.length - 1]
   const noServers = servers.length === 0
+  const [askAdmin, setAskAdmin] = useState(false)
+  const [adminBusy, setAdminBusy] = useState(false)
 
   const onPower = async (): Promise<void> => {
     if (noServers && status === 'off') {
@@ -105,10 +108,14 @@ export function Home(): ReactElement {
           <Segmented
             label="Режим работы"
             value={settings.mode}
-            onChange={(m) => void vpn().updateSettings({ mode: m })}
+            onChange={(m) => {
+              if (m === settings.mode) return
+              if (m === 'proxy' || app.system.isAdmin) void vpn().updateSettings({ mode: m })
+              else setAskAdmin(true)
+            }}
             items={[
               { value: 'proxy', title: 'Браузер и программы', tech: 'системный прокси', icon: 'browser', hint: 'Режим «Браузер и программы»: через VPN идут браузеры и программы, которые это умеют. Остальные работают как обычно. Права администратора не нужны.' },
-              { value: 'tun', title: 'Весь компьютер', tech: 'туннель, TUN', icon: 'monitor', disabled: true, note: 'скоро', hint: 'Скоро: режим «Весь компьютер» — через VPN пойдёт вообще весь интернет, включая игры и программы без настроек. Для него потребуется разрешение администратора.' }
+              { value: 'tun', title: 'Весь компьютер', tech: 'туннель, TUN', icon: 'monitor', hint: 'Режим «Весь компьютер»: через VPN идёт вообще весь интернет, включая игры и программы без настроек. Нужно разрешение администратора — Windows спросит один раз.' }
             ]}
           />
           <p className="mode__hint">{MODE_HINT[settings.mode]}</p>
@@ -201,6 +208,33 @@ export function Home(): ReactElement {
           </div>
         </div>
       </div>
+      <Modal
+        open={askAdmin}
+        onClose={() => !adminBusy && setAskAdmin(false)}
+        title="Нужно разрешение администратора"
+        actions={
+          <>
+            <button className="btn btn--ghost" disabled={adminBusy} onClick={() => setAskAdmin(false)}>Не сейчас</button>
+            <button
+              className="btn btn--primary"
+              disabled={adminBusy}
+              onClick={async () => {
+                setAdminBusy(true)
+                try {
+                  const r = await vpn().requestTunMode()
+                  pushToast({ kind: r.ok ? 'success' : 'warn', text: r.message })
+                  if (!r.relaunching) setAskAdmin(false)
+                } finally { setAdminBusy(false) }
+              }}
+            >
+              {adminBusy ? <span className="spinner" /> : <Icon name="shield-check" size={17} />} Разрешить
+            </button>
+          </>
+        }
+      >
+        <p>Режим «Весь компьютер» пускает через VPN <b>весь интернет</b> — даже программы и игры, которые ничего не знают про VPN. Чтобы Windows это позволила, программа должна работать с правами администратора.</p>
+        <p style={{ marginTop: 10 }}>Windows спросит <b>один раз</b>. Дальше программа будет запускаться сама, без вопросов. Ваши файлы и пароли это не затрагивает, а разрешение можно забрать в «Настройках».</p>
+      </Modal>
     </div>
   )
 }

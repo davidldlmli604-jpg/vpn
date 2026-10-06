@@ -24,7 +24,7 @@ interface NavItem { page: Page; title: string; icon: IconName; hint: string; soo
 const NAV: NavItem[] = [
   { page: 'home', title: 'Главная', icon: 'home', hint: 'Главная: здесь большая кнопка включения и всё, что сейчас происходит с подключением.' },
   { page: 'servers', title: 'Серверы', icon: 'servers', hint: 'Серверы: список ваших ключей. Выберите, через какую страну пойдёт интернет, или добавьте новый ключ.' },
-  { page: 'bypass', title: 'Мимо VPN', icon: 'split', soon: true, hint: 'Скоро: здесь можно будет выбрать сайты и программы, которые должны открываться напрямую, без VPN.' },
+  { page: 'bypass', title: 'Мимо VPN', icon: 'split', hint: 'Мимо VPN: сайты и программы, которые должны открываться напрямую — российские сайты, игры, свои списки.' },
   { page: 'protection', title: 'Защита', icon: 'shield', soon: true, hint: 'Скоро: защита от утечек — например, чтобы интернет сам отключался, если VPN оборвётся.' },
   { page: 'settings', title: 'Настройки', icon: 'sliders', hint: 'Настройки: цвета и тема окна, анимации и поведение программы.' }
 ]

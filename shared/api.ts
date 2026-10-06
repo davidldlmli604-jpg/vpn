@@ -1,5 +1,5 @@
 // Договор между окном и «внутренностями»: что окно может попросить и о чём оно узнаёт.
-import type { AddResult, AppState, Settings, StatsSample } from './types'
+import type { AddResult, AppState, RunningApp, Settings, StatsSample } from './types'
 
 export interface ToastMessage {
   id: string
@@ -25,6 +25,15 @@ export interface VpnApi {
   // подключение
   connect(serverId?: string): Promise<void>
   disconnect(): Promise<void>
+  /** Включить режим «весь компьютер»: при необходимости один раз попросит права администратора. */
+  requestTunMode(): Promise<{ ok: boolean; message: string; relaunching: boolean }>
+  /** Забрать выданное разрешение администратора (удаляет задачу планировщика). */
+  revokeElevation(): Promise<{ ok: boolean; message: string }>
+
+  // исключения
+  listRunningApps(): Promise<RunningApp[]>
+  listInstalledApps(): Promise<RunningApp[]>
+  updateRules(): Promise<{ ok: boolean; message: string }>
 
   // настройки
   updateSettings(patch: Partial<Settings>): Promise<void>
@@ -46,7 +55,7 @@ export const IPC = {
 /** Методы, которые разрешено вызывать из окна. Всё остальное «внутренности» отвергают. */
 export const INVOKABLE = [
   'getState', 'pasteKey', 'addKeyText', 'selectServer', 'renameServer', 'removeServer', 'toggleFavorite',
-  'connect', 'disconnect', 'updateSettings', 'updateAdvanced', 'windowAction', 'quit'
+  'connect', 'disconnect', 'requestTunMode', 'revokeElevation', 'listRunningApps', 'listInstalledApps', 'updateRules', 'updateSettings', 'updateAdvanced', 'windowAction', 'quit'
 ] as const
 
 declare global {

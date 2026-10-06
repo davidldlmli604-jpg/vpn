@@ -3,6 +3,7 @@ import { useEffect, type ReactElement } from 'react'
 import { Aurora } from './components/Aurora'
 import { Toasts } from './components/Overlays'
 import { Sidebar, TitleBar } from './components/Shell'
+import { Bypass } from './pages/Bypass'
 import { Home } from './pages/Home'
 import { Servers } from './pages/Servers'
 import { Settings } from './pages/Settings'
@@ -58,6 +59,7 @@ export function App(): ReactElement {
               <motion.div key={page} variants={pageVariants} initial="initial" animate="animate" exit="exit" style={{ minHeight: '100%' }}>
                 {page === 'home' && <Home />}
                 {page === 'servers' && <Servers />}
+                {page === 'bypass' && <Bypass />}
                 {page === 'settings' && <Settings />}
               </motion.div>
             </AnimatePresence>
