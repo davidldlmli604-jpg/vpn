@@ -674,7 +674,8 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
     this.restarting = true
     this.quiet = true
     try {
-      const id = this.conn.state.serverId ?? this.store.settings.selectedServerId
+      // подключаемся к ВЫБРАННОМУ серверу: при смене сервера текущее подключение ещё на старом
+      const id = this.store.settings.selectedServerId ?? this.conn.state.serverId
       this.log.add(`Перезапуск подключения: ${reason}`)
       await this.conn.disconnect()
       await this.conn.connect(id)
