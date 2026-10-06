@@ -18,6 +18,7 @@ export const DEFAULT_SETTINGS: Settings = {
   notifications: true,
   assistant: true,
   closeToTray: true,
+  autoUpdate: true,
   wizardDone: false,
   selectedServerId: null,
   advanced: {

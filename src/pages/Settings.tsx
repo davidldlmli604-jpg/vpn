@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion'
 import type { ReactElement } from 'react'
 import brand from '@brand'
-import type { MotionLevel, Palette, ThemeMode } from '@shared/types'
+import type { MotionLevel, Palette, ThemeMode, UpdateInfo } from '@shared/types'
 import { Expert } from '../components/Expert'
 import { Icon } from '../components/Icon'
 import { Chips, Setting, Toggle } from '../components/controls'
@@ -13,6 +13,17 @@ const PALETTES: Array<{ id: Palette; name: string; desc: string; a: string; b: s
   { id: 'sunset', name: 'Закат', desc: 'Коралл и малина — тепло и ярко', a: '#ff9a62', b: '#ff4d8d' },
   { id: 'forest', name: 'Хвоя', desc: 'Изумруд и золото — глубоко и строго', a: '#4be59b', b: '#e8c85a' }
 ]
+
+function updateLine(u: UpdateInfo): string {
+  switch (u.status) {
+    case 'checking': return 'Проверяю, нет ли новой версии…'
+    case 'downloading': return `Скачиваю версию ${u.version ?? ''} в фоне: ${u.percent}%. Пользоваться программой можно как обычно.`
+    case 'ready': return `Новая версия ${u.version} скачана. Поставится сама, когда вы закроете программу, — или нажмите «Обновить сейчас».`
+    case 'latest': return `У вас последняя версия.${u.checkedAt ? ` Проверено в ${new Date(u.checkedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}.` : ''}`
+    case 'error': return u.error ?? 'Не получилось проверить обновления.'
+    default: return 'Новые версии проверяются при запуске и раз в 6 часов.'
+  }
+}
 
 export function Settings(): ReactElement {
   const app = useApp((s) => s.app)!
@@ -102,6 +113,32 @@ export function Settings(): ReactElement {
           <Setting name="Уведомления" hint="Небольшие сообщения Windows: подключено, отключено, связь оборвалась.">
             <Toggle label="Уведомления" checked={settings.notifications} onChange={(v) => set({ notifications: v })} />
           </Setting>
+        </div>
+      </section>
+
+      <section className="section">
+        <h2 className="section__title">Обновления</h2>
+        <div className="glass card">
+          {system.update.status === 'unsupported' ? (
+            <Setting name={`Версия ${system.appVersion}`} hint="Эта копия программы не обновляется сама (так бывает у переносимой версии из архива). Новую версию можно скачать и поставить поверх — ключи и настройки сохранятся.">
+              <span className="badge">вручную</span>
+            </Setting>
+          ) : (
+            <>
+              <Setting name="Обновлять автоматически" tech="GitHub Releases" hint="Программа сама проверяет, не вышла ли новая версия (при запуске и раз в 6 часов), скачивает её в фоне и ставит, когда вы её закроете. Никаких данных о вас при этом не отправляется." help="Новая версия берётся со страницы выпусков проекта на GitHub. Ключи и настройки при обновлении сохраняются. Выключите, если хотите обновляться только вручную.">
+                <Toggle label="Обновлять автоматически" checked={settings.autoUpdate} onChange={(v) => set({ autoUpdate: v })} />
+              </Setting>
+              <Setting name={`Версия ${system.appVersion}`} hint={updateLine(system.update)}>
+                {system.update.status === 'ready' ? (
+                  <button className="btn btn--primary btn--sm" data-hint="Программа закроется (VPN выключится), поставит новую версию и откроется снова. Это занимает несколько секунд." onClick={() => void vpn().installUpdate()}>Обновить сейчас</button>
+                ) : (
+                  <button className="btn btn--ghost btn--sm" disabled={system.update.status === 'checking' || system.update.status === 'downloading'} data-hint="Проверить прямо сейчас, нет ли новой версии. Если есть — она скачается в фоне." onClick={() => void vpn().checkForUpdates()}>
+                    {system.update.status === 'checking' ? 'Проверяю…' : system.update.status === 'downloading' ? `Скачиваю ${system.update.percent}%` : 'Проверить сейчас'}
+                  </button>
+                )}
+              </Setting>
+            </>
+          )}
         </div>
       </section>
 

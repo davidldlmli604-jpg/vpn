@@ -67,6 +67,12 @@ export interface VpnApi {
   getConfigPreview(): Promise<ConfigPreview | null>
   copyText(text: string): Promise<void>
 
+  // обновления
+  /** Проверить, нет ли новой версии; если есть — она скачивается в фоне. */
+  checkForUpdates(): Promise<void>
+  /** Закрыть программу (VPN аккуратно выключается) и поставить скачанную версию; после установки программа откроется снова. */
+  installUpdate(): Promise<void>
+
   // окно
   windowAction(action: 'minimize' | 'close' | 'hide-to-tray'): Promise<void>
   quit(): Promise<void>
@@ -83,7 +89,7 @@ export const IPC = {
 /** Методы, которые разрешено вызывать из окна. Всё остальное «внутренности» отвергают. */
 export const INVOKABLE = [
   'getState', 'pasteKey', 'addKeyText', 'selectServer', 'renameServer', 'removeServer', 'toggleFavorite', 'pingServers', 'refreshSubscription', 'renameSubscription', 'removeSubscription', 'getQr', 'runCheck', 'clearCheck', 'recoverInternet',
-  'connect', 'disconnect', 'requestTunMode', 'revokeElevation', 'listRunningApps', 'listInstalledApps', 'updateRules', 'updateSettings', 'updateAdvanced', 'resetAdvanced', 'getLogs', 'clearLogs', 'getConfigPreview', 'copyText', 'windowAction', 'quit'
+  'connect', 'disconnect', 'requestTunMode', 'revokeElevation', 'listRunningApps', 'listInstalledApps', 'updateRules', 'updateSettings', 'updateAdvanced', 'resetAdvanced', 'getLogs', 'clearLogs', 'getConfigPreview', 'copyText', 'checkForUpdates', 'installUpdate', 'windowAction', 'quit'
 ] as const
 
 declare global {

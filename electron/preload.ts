@@ -51,6 +51,8 @@ const api: VpnApi = {
   clearLogs: () => call('clearLogs'),
   getConfigPreview: () => call('getConfigPreview'),
   copyText: (text) => call('copyText', text),
+  checkForUpdates: () => call('checkForUpdates'),
+  installUpdate: () => call('installUpdate'),
 
   windowAction: (action) => call('windowAction', action),
   quit: () => call('quit')

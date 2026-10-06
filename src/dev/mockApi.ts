@@ -53,7 +53,8 @@ export function createMockApi(): VpnApi {
     system: {
       platform: 'win32', appVersion: '0.1.0', isAdmin: false, elevationReady: false,
       singbox: { found: true, version: '1.14.2', path: 'engine/sing-box.exe' }, secureStorage: true,
-      rules: { updatedAt: null, count: 31, updating: false, bundledOnly: true }, startedHidden: false, killSwitchActive: false
+      rules: { updatedAt: null, count: 31, updating: false, bundledOnly: true }, startedHidden: false, killSwitchActive: false,
+      update: { status: q.get('update') === 'ready' ? 'ready' : 'latest', version: q.get('update') === 'ready' ? '0.2.5' : null, percent: q.get('update') === 'ready' ? 100 : 0, error: null, checkedAt: Date.now() - 40 * 60_000 }
     }
   }
 
@@ -230,6 +231,15 @@ export function createMockApi(): VpnApi {
       return { ok: true, message: 'Списки обновлены.' }
     },
 
+    checkForUpdates: async () => {
+      app = { ...app, system: { ...app.system, update: { ...app.system.update, status: 'checking' } } }
+      emit()
+      await new Promise((r) => setTimeout(r, 1200))
+      app = { ...app, system: { ...app.system, update: { ...app.system.update, status: 'latest', checkedAt: Date.now() } } }
+      emit()
+      toast('success', 'У вас последняя версия.')
+    },
+    installUpdate: async () => toast('info', 'В просмотре оформления обновление не ставится.'),
     windowAction: async () => undefined,
     quit: async () => undefined
   }

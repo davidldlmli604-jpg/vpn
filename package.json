@@ -19,13 +19,15 @@
     "test:watch": "vitest",
     "fetch:singbox": "node scripts/fetch-singbox.mjs",
     "fetch:rules": "node scripts/fetch-rules.mjs",
-    "dist": "npm run build && node scripts/fetch-singbox.mjs --target win32-x64 && electron-builder --win --x64 --config electron-builder.config.cjs",
+    "dist": "npm run build && node scripts/fetch-singbox.mjs --target win32-x64 && electron-builder --win --x64 --config electron-builder.config.cjs --publish never",
+    "dist:publish": "npm run build && node scripts/fetch-singbox.mjs --target win32-x64 && electron-builder --win --x64 --config electron-builder.config.cjs --publish always",
     "screenshots": "node scripts/screenshots.mjs",
     "test:e2e": "xvfb-run -a vitest run --config vitest.e2e.config.ts",
-    "dist:portable": "npm run build && node scripts/fetch-singbox.mjs --target win32-x64 && electron-builder --win zip --x64 --config electron-builder.config.cjs"
+    "dist:portable": "npm run build && node scripts/fetch-singbox.mjs --target win32-x64 && electron-builder --win zip --x64 --config electron-builder.config.cjs --publish never"
   },
   "dependencies": {
     "@fontsource-variable/manrope": "^5.3.0",
+    "electron-updater": "^6.8.9",
     "flag-icons": "^7.5.0",
     "framer-motion": "^12.43.0",
     "qrcode": "^1.5.4",

@@ -25,6 +25,7 @@ import { httpGetWithFallback } from './services/http'
 import { DataStore, SecureStorageError, newId, type Sealer } from './store'
 import { cleanApps, findShortcuts, listRunning, startMenuDirs, toRunningApp, type RawApp } from './apps'
 import { basename } from 'node:path'
+import { UpdateService, type UpdaterLike } from './updater'
 
 export interface Host {
   platform: NodeJS.Platform
@@ -55,6 +56,8 @@ export interface Host {
   fileIcon(path: string): Promise<string | null>
   /** Цель ярлыка .lnk (куда он ведёт) или null. */
   readShortcut(path: string): string | null
+  /** Автообновление (electron-updater); null — программа не установлена (разработка, переносимая версия). */
+  updater?: UpdaterLike | null
 }
 
 export interface ControllerPaths {
@@ -103,6 +106,7 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
   private statsListeners: Array<Listener<StatsSample>> = []
   private toastListeners: Array<Listener<ToastMessage>> = []
   private navListeners: Array<Listener<string>> = []
+  readonly updates: UpdateService
 
   constructor(readonly host: Host, readonly paths: ControllerPaths, sealer: Sealer, overrides: { systemProxy?: SystemProxy; fetchExit?: typeof fetchExitInfo; ruleFetch?: (url: string) => Promise<Buffer>; probeUrls?: string[]; fetchSubscription?: (url: string, proxyPort: number | null) => Promise<SubscriptionFetch>; killSwitchRunner?: Runner; countryOf?: typeof countryOfIp; ruCheckUrl?: string; configTransform?: (config: Record<string, unknown>) => Record<string, unknown> } = {}) {
     this.probeUrls = overrides.probeUrls
@@ -111,6 +115,12 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
     this.ruCheckUrl = overrides.ruCheckUrl ?? 'http://ya.ru/'
     this.log = new AppLog(join(paths.userDir, 'logs', 'app.log'))
     this.store = new DataStore(join(paths.userDir, 'data.json'), sealer)
+    this.updates = new UpdateService(host.updater ?? null, {
+      onChange: () => this.pushState(),
+      log: (l) => this.log.add(l),
+      tell: (kind, text) => this.toast(kind, text),
+      onReady: (v) => { if (this.store.settings.notifications) this.host.notify(`Скачана новая версия ${v}`, 'Установится, когда вы закроете программу.') }
+    })
     this.rules = new RuleSets({
       userDir: join(paths.userDir, 'rules'),
       bundledDir: paths.bundledRulesDir,
@@ -186,6 +196,7 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
     // подписки обновляются сами по сроку, который задал поставщик (обычно раз в 12 часов); без шума, если всё хорошо
     setTimeout(() => void this.refreshDueSubscriptions(), 15_000)
     this.subTimer = setInterval(() => void this.refreshDueSubscriptions(), 10 * 60_000)
+    this.updates.schedule(this.store.settings.autoUpdate)
   }
 
   // ---------------------------------------------------------------- после аварийного завершения
@@ -260,7 +271,8 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
       secureStorage: this.store.secureAvailable,
       rules: this.rules.status(),
       startedHidden: this.host.startedHidden,
-      killSwitchActive: this.killSwitch.active
+      killSwitchActive: this.killSwitch.active,
+      update: this.updates.state
     }
   }
 
@@ -797,6 +809,10 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
     if (before.killSwitch && !after.killSwitch && this.conn.state.blocked) await this.conn.releaseProtection()
     else if (before.killSwitch && !after.killSwitch && this.conn.state.status === 'off') await this.killSwitch.disarm()
     if (needsRestart && (this.conn.state.status === 'on' || this.conn.state.status === 'connecting')) this.scheduleRestart('Изменены настройки')
+    if (before.autoUpdate !== after.autoUpdate) {
+      this.updates.schedule(after.autoUpdate)
+      if (after.autoUpdate) void this.updates.check(false)
+    }
     this.pushState()
   }
 
@@ -852,6 +868,23 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
     return { ok: true, message: 'Готово: VPN выключен, все ограничения сняты. Если интернета всё равно нет — проверьте роутер или провайдера.' }
   }
 
+  // ---------------------------------------------------------------- обновления
+
+  async checkForUpdates(): Promise<void> {
+    await this.updates.check(true)
+  }
+
+  /** «Обновить сейчас»: установщик запускается, программа закрывается (VPN выключается как при обычном выходе). */
+  async installUpdate(): Promise<void> {
+    if (this.updates.state.status !== 'ready') {
+      this.toast('info', 'Новая версия ещё не скачана.')
+      return
+    }
+    // сначала аккуратно выключаем VPN (системный прокси, защита), и только потом отдаём программу установщику
+    await this.shutdown()
+    this.updates.installNow()
+  }
+
   // ---------------------------------------------------------------- окно
 
   async windowAction(action: 'minimize' | 'close' | 'hide-to-tray'): Promise<void> {
@@ -868,6 +901,7 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
     if (this.rulesTimer) clearInterval(this.rulesTimer)
     if (this.subTimer) clearInterval(this.subTimer)
     for (const ac of this.pingAborts) ac.abort()
+    this.updates.dispose()
     await this.conn.shutdown()
     this.store.flush()
   }

@@ -1,6 +1,6 @@
 // Точка входа приложения: окно, шифрование системой, связь окна с контроллером.
 import { app, BrowserWindow, clipboard, ipcMain, Menu, Notification, safeStorage, shell, nativeTheme, nativeImage, Tray } from 'electron'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import brand from '../brand.json'
 import { IPC, INVOKABLE } from '../shared/api'
@@ -11,6 +11,24 @@ import { notifyExisting, startControl, waitUntilFree, type ControlHandle } from 
 import { TrayController, type TrayMenuItem } from './tray'
 import type { AppState } from '../shared/types'
 import type { Sealer } from './store'
+import type { UpdaterLike } from './updater'
+
+/**
+ * Автообновление есть только у установленной программы: установщик кладёт рядом app-update.yml (откуда брать
+ * новые версии). У переносимой версии и в папке разработки его нет — там обновление вручную.
+ */
+function createUpdater(): UpdaterLike | null {
+  if (!app.isPackaged || process.platform !== 'win32') return null
+  if (!existsSync(join(process.resourcesPath, 'app-update.yml'))) return null
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { autoUpdater } = require('electron-updater') as typeof import('electron-updater')
+    autoUpdater.logger = null
+    return autoUpdater as unknown as UpdaterLike
+  } catch {
+    return null
+  }
+}
 
 // Название задаётся в одном месте — brand.json. Папку данных привязываем к неизменному id,
 // чтобы смена названия не «теряла» настройки и ключи.
@@ -123,7 +141,8 @@ const host: Host = {
   },
   readShortcut: (path) => {
     try { return shell.readShortcutLink(path).target || null } catch { return null }
-  }
+  },
+  updater: createUpdater()
 }
 
 function createWindow(): BrowserWindow {
@@ -280,7 +299,9 @@ app.on('before-quit', (e) => {
   void c.shutdown().catch(() => undefined).finally(() => {
     tray?.destroy()
     controller = null
-    app.exit(0)
+    // «Обновить сейчас» уже запустил установщик — просто выходим. Иначе, если новая версия скачана, ставим её тихо:
+    // установщик дождётся, пока программа закроется (сам quitAndInstall снова вызовет выход — он пройдёт без задержек).
+    if (c.updates.installing || !c.updates.installOnQuit()) app.exit(0)
   })
 })
 for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(sig, () => app.quit())
