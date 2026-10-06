@@ -55,6 +55,7 @@ jobs:
         run: |
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           bash scripts/build-libbox.sh android/app/libs/libbox.aar
+          test -s android/app/libs/libbox.aar
 
       # ---------- окно (общий интерфейс «Тропы») и само приложение
       - uses: actions/setup-java@v4

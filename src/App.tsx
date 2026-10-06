@@ -27,6 +27,7 @@ function useRootAttributes(): void {
     const apply = (): void => {
       const dark = settings?.theme === 'system' ? matchMedia('(prefers-color-scheme: dark)').matches : settings?.theme !== 'light'
       root.dataset.theme = dark ? 'dark' : 'light'
+      if (import.meta.env.MODE === 'android') void import('./mobile/systemBars').then((m) => m.setBarsForTheme(dark))
     }
     apply()
     root.dataset.palette = settings?.palette ?? 'aurora'

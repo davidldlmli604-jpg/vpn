@@ -10,7 +10,7 @@
 set -euo pipefail
 
 VERSION="${SINGBOX_VERSION:?нужна SINGBOX_VERSION, например 1.14.2}"
-OUT="${1:?куда положить libbox.aar}"
+OUT="$(realpath -m "${1:?куда положить libbox.aar}")" # полный путь: ниже скрипт переходит в другую папку
 WORK="$(mktemp -d)"
 
 git clone --quiet --depth 1 --branch "v$VERSION" https://github.com/SagerNet/sing-box "$WORK/sing-box"
@@ -37,4 +37,5 @@ LDFLAGS="-X github.com/sagernet/sing-box/constant.Version=$VERSION -X runtime.go
 mkdir -p "$(dirname "$OUT")"
 cp "$WORK/libbox.aar" "$OUT"
 cp LICENSE "$(dirname "$OUT")/LICENSE-sing-box.txt"
+ls -la "$OUT"
 echo "libbox.aar готов: $OUT"
