@@ -1,6 +1,7 @@
 // Жизненный цикл подключения на настоящем движке: подключение, скорость, обрыв, переподключение, отключение.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { createServer as createNetServer } from 'node:net'
 import { join } from 'node:path'
 import { RULESETS, parseInput } from '../core'
 import type { RuleSetFile } from '../core'
@@ -206,6 +207,25 @@ describe('ConnectionManager на настоящем движке', () => {
     expect(mgr.state.status).toBe('on')
     expect(logs.join('\n')).toContain('вшитые')
     await mgr.disconnect()
+  }, 60000)
+
+  it('порт успели занять между проверкой и запуском движка: программа сама берёт другой свободный порт', async () => {
+    // имитируем гонку: при первом запуске движку подсовывается уже занятый порт
+    const busy = createNetServer()
+    const busyPort = await new Promise<number>((r) => busy.listen(0, '127.0.0.1', () => r((busy.address() as { port: number }).port)))
+    let first = true
+    const { mgr, logs } = setup({ deps: { configTransform: (c) => {
+      if (first) { first = false; for (const i of c.inbounds as Array<Record<string, unknown>>) if (i.type === 'mixed') i.listen_port = busyPort }
+      return c
+    } } })
+    await mgr.connect('s1')
+    expect(mgr.state.status).toBe('on')
+    expect(mgr.proxyPort).not.toBe(busyPort)
+    expect(logs.join('\n')).toContain('пробую другой')
+    const r = await httpViaProxy(mgr.proxyPort, 'http://203.0.113.7:8080/')
+    expect(r.body).toBe(REPLY)
+    await mgr.disconnect()
+    await new Promise<void>((r2) => busy.close(() => r2()))
   }, 60000)
 
   it('повторное «подключить» во время работы ничего не ломает', async () => {
