@@ -145,17 +145,36 @@ class TropaPlugin : Plugin() {
                 o.put("body", out.toString("UTF-8"))
                 o.put("headers", headers)
                 call.resolve(o)
-            } catch (e: java.net.SocketTimeoutException) {
-                call.reject(e.toString(), "timeout")
-            } catch (e: java.net.UnknownHostException) {
-                call.reject(e.toString(), "dns")
-            } catch (e: javax.net.ssl.SSLException) {
-                call.reject(e.toString(), "tls")
             } catch (e: java.net.MalformedURLException) {
                 call.reject(e.toString(), "bad-url")
             } catch (e: Exception) {
-                val code = if (e.toString().contains("Cleartext", ignoreCase = true)) "cleartext" else "network"
-                call.reject(e.toString(), code)
+                // Запасной путь: тот же запрос сетевым кодом движка sing-box (другая реализация TLS и DNS).
+                // Помогает, когда защищённое соединение средствами Android не устанавливается.
+                try {
+                    val client = Libbox.newHTTPClient()
+                    try {
+                        client.modernTLS()
+                        val req = client.newRequest()
+                        req.setURL(url)
+                        req.setUserAgent(ua)
+                        val body = req.execute().getContent().value
+                        val o = JSObject()
+                        o.put("status", 200)
+                        o.put("body", body)
+                        o.put("headers", JSObject())
+                        call.resolve(o)
+                    } finally {
+                        runCatching { client.close() }
+                    }
+                } catch (e2: Exception) {
+                    val code = when (e) {
+                        is java.net.SocketTimeoutException -> "timeout"
+                        is java.net.UnknownHostException -> "dns"
+                        is javax.net.ssl.SSLException -> "tls"
+                        else -> if (e.toString().contains("Cleartext", ignoreCase = true)) "cleartext" else "network"
+                    }
+                    call.reject("Android: $e | движок: ${e2.message ?: e2}", code)
+                }
             }
         }.start()
     }

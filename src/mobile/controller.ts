@@ -358,7 +358,9 @@ class MobileController implements VpnApi {
       const f = subscriptionFailed(kind)
       // техническая причина — в скобках: по ней видно, что именно случилось (адрес не находится, сертификат, …)
       if (f.outcome.kind === 'error' && kind === 'network') {
-        const why = err.code === 'dns' ? 'адрес сайта не находится' : err.code === 'tls' ? 'ошибка защищённого соединения' : (err.message ?? '').slice(0, 120)
+        const what = err.code === 'dns' ? 'адрес сайта не находится' : err.code === 'tls' ? 'ошибка защищённого соединения' : 'ошибка сети'
+        // пока телефонная версия новая — показываем и технический текст: по нему видно точную причину
+        const why = `${what}: ${(err.message ?? '').replace(/https?:\/\/\S+/g, '…').slice(0, 300)}`
         f.outcome.error.message = `${f.outcome.error.message} (${why})`
       }
       return f
