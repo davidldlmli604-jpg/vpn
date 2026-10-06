@@ -316,7 +316,9 @@ class MobileController implements VpnApi {
       mixedPort: 0,
       clashPort: 0,
       clashSecret: '',
-      tun: { mtu: s.advanced.mtu, stack: s.advanced.tunStack, ipv6: s.advanced.tunIpv6, strictRoute: true },
+      // IPv6 в туннеле на телефоне всегда: иначе Android пустил бы IPv6-трафик мимо VPN. (На Windows он выключен
+      // по умолчанию из-за компьютеров с отключённым IPv6 — на Android такой проблемы нет.)
+      tun: { mtu: s.advanced.mtu, stack: s.advanced.tunStack, ipv6: true, strictRoute: true },
       bypassRu: s.bypassRu,
       ruleSets: [],
       bypassProcesses: [],

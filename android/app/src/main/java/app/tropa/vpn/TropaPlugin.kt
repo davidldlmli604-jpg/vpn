@@ -102,7 +102,7 @@ class TropaPlugin : Plugin() {
     @ActivityCallback
     private fun onScan(call: PluginCall?, result: ActivityResult) {
         call ?: return
-        val r: ScanIntentResult = ScanIntentResult.parseActivityResult(result.resultCode, result.data)
+        val r: ScanIntentResult = ScanContract().parseResult(result.resultCode, result.data)
         val o = JSObject()
         o.put("text", r.contents)
         if (r.contents == null && ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) o.put("denied", true)
