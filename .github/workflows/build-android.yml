@@ -1,11 +1,11 @@
-# Сборка APK для Android. Запускается сама при каждой отправке в рабочую ветку (и вручную: Actions →
+# Сборка APK для Android. Запускается сама при изменениях в main и в рабочей ветке (и вручную: Actions →
 # «Сборка для Android» → Run workflow). Готовый файл — в разделе Artifacts запуска: tropa-android-0.1.N.
 name: Сборка для Android
 
 on:
   workflow_dispatch:
   push:
-    branches: [claude/brave-pasteur-rsz7b8]
+    branches: [main, claude/brave-pasteur-rsz7b8]
     paths:
       - 'android/**'
       - 'src/**'
