@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Тропа</string>
+    <string name="title_activity_main">Тропа</string>
+    <string name="package_name">app.tropa.vpn</string>
+    <string name="custom_url_scheme">app.tropa.vpn</string>
+    <string name="vpn_channel">Работа VPN</string>
+    <string name="vpn_connecting">Подключаюсь…</string>
+    <string name="vpn_on">VPN включён · %1$s</string>
+    <string name="vpn_stop">Выключить</string>
+</resources>

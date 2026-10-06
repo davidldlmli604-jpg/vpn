@@ -29,6 +29,7 @@ export function Settings(): ReactElement {
   const app = useApp((s) => s.app)!
   const { settings, system } = app
   const set = (patch: Parameters<ReturnType<typeof vpn>['updateSettings']>[0]): void => void vpn().updateSettings(patch)
+  const mobile = system.platform === 'android'
   const withWave = (e: React.MouseEvent, change: () => void): void => withThemeTransition({ x: e.clientX, y: e.clientY }, settings.motion, change)
 
   return (
@@ -64,7 +65,7 @@ export function Settings(): ReactElement {
           ))}
         </div>
         <div className="glass card">
-          <Setting name="Тема" hint="Тёмная — основная; светлая удобнее днём. «Как в системе» следует настройке Windows.">
+          <Setting name="Тема" hint={`Тёмная — основная; светлая удобнее днём. «Как в системе» следует настройке ${mobile ? 'телефона' : 'Windows'}.`}>
             <div onClick={(e) => e.stopPropagation()}>
               <Chips<ThemeMode>
                 label="Тема"
@@ -74,7 +75,7 @@ export function Settings(): ReactElement {
               />
             </div>
           </Setting>
-          <Setting name="Анимации" hint="Чем их меньше, тем меньше нагрузка на слабый компьютер.">
+          <Setting name="Анимации" hint={`Чем их меньше, тем меньше нагрузка на ${mobile ? 'телефон и батарею' : 'слабый компьютер'}.`}>
             <Chips<MotionLevel>
               label="Анимации"
               value={settings.motion}
@@ -85,14 +86,14 @@ export function Settings(): ReactElement {
         </div>
       </section>
 
-      <section className="section">
+      {!mobile && <section className="section">
         <h2 className="section__title">Помощник</h2>
         <div className="glass card">
           <Setting name="Шелти-помощник" hint="Собака внизу слева: следит за курсором и подсказывает, что делает кнопка, на которую вы навели мышку." help="Это я! Если включено — я подсказываю по наведению мыши. Выключите, если мешаю, — мне будет немного грустно, но я пойму.">
             <Toggle label="Шелти-помощник" checked={settings.assistant} onChange={(v) => set({ assistant: v })} />
           </Setting>
         </div>
-      </section>
+      </section>}
 
       <section className="section">
         <h2 className="section__title">Запуск и работа</h2>
@@ -102,7 +103,7 @@ export function Settings(): ReactElement {
               <Toggle label="Запускать вместе с Windows" checked={settings.autostart} onChange={(v) => set({ autostart: v })} />
             </Setting>
           )}
-          <Setting name="Подключаться при запуске" tech="автоподключение" hint="Как только программа запустится, она сама включит VPN через выбранный сервер. Вместе с автозапуском: включили компьютер — уже под защитой." help="Если включить вместе с «Запускать вместе с Windows», VPN будет подключаться сам сразу после загрузки компьютера, вам не придётся нажимать кнопку.">
+          <Setting name="Подключаться при запуске" tech="автоподключение" hint={mobile ? 'Как только вы откроете приложение, оно само включит VPN через выбранный сервер.' : 'Как только программа запустится, она сама включит VPN через выбранный сервер. Вместе с автозапуском: включили компьютер — уже под защитой.'} help={mobile ? 'VPN включится сам, как только вы откроете приложение, — не придётся нажимать кнопку.' : 'Если включить вместе с «Запускать вместе с Windows», VPN будет подключаться сам сразу после загрузки компьютера, вам не придётся нажимать кнопку.'}>
             <Toggle label="Подключаться при запуске" checked={settings.connectOnLaunch} onChange={(v) => set({ connectOnLaunch: v })} />
           </Setting>
           {system.platform === 'win32' && (
@@ -110,9 +111,9 @@ export function Settings(): ReactElement {
               <Toggle label="Крестик сворачивает в трей" checked={settings.closeToTray} onChange={(v) => set({ closeToTray: v })} />
             </Setting>
           )}
-          <Setting name="Уведомления" hint="Небольшие сообщения Windows: подключено, отключено, связь оборвалась.">
+          {!mobile && <Setting name="Уведомления" hint="Небольшие сообщения Windows: подключено, отключено, связь оборвалась.">
             <Toggle label="Уведомления" checked={settings.notifications} onChange={(v) => set({ notifications: v })} />
-          </Setting>
+          </Setting>}
         </div>
       </section>
 
@@ -120,7 +121,7 @@ export function Settings(): ReactElement {
         <h2 className="section__title">Обновления</h2>
         <div className="glass card">
           {system.update.status === 'unsupported' ? (
-            <Setting name={`Версия ${system.appVersion}`} hint="Эта копия программы не обновляется сама (так бывает у переносимой версии из архива). Новую версию можно скачать и поставить поверх — ключи и настройки сохранятся.">
+            <Setting name={`Версия ${system.appVersion}`} hint={system.platform === 'android' ? 'Новая версия ставится файлом APK поверх этой — ключи и настройки сохранятся.' : 'Эта копия программы не обновляется сама (так бывает у переносимой версии из архива). Новую версию можно скачать и поставить поверх — ключи и настройки сохранятся.'}>
               <span className="badge">вручную</span>
             </Setting>
           ) : (
@@ -157,7 +158,7 @@ export function Settings(): ReactElement {
         </section>
       )}
 
-      <Expert />
+      {!mobile && <Expert />}
 
       <section className="section">
         <h2 className="section__title">О программе</h2>

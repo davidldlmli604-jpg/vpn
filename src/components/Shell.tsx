@@ -37,11 +37,14 @@ export function Sidebar(): ReactElement {
   const app = useApp((s) => s.app)
   const id = useId()
   const status = app?.conn.status ?? 'off'
+  // На телефоне пока только «Главная» и «Настройки»: остальные разделы появятся в следующих этапах (не показываем пустышки)
+  const mobile = app?.system.platform === 'android'
+  const nav = mobile ? NAV.filter((n) => n.page === 'home' || n.page === 'settings') : NAV
   const server = app?.servers.find((s) => s.id === (app.conn.serverId ?? app.settings.selectedServerId))
   return (
     <nav className="sidebar" aria-label="Разделы">
       <LayoutGroup id={id}>
-        {NAV.map((n) => (
+        {nav.map((n) => (
           <button key={n.page} className="nav" data-hint={n.hint} aria-current={page === n.page ? 'page' : undefined} disabled={n.soon} style={n.soon ? { opacity: 0.6, cursor: 'not-allowed' } : undefined} onClick={() => !n.soon && setPage(n.page)}>
             {page === n.page && <motion.span layoutId="nav-pill" className="nav__pill" transition={{ type: 'spring', stiffness: 420, damping: 36 }} />}
             <Icon name={n.icon} />
@@ -51,14 +54,14 @@ export function Sidebar(): ReactElement {
         ))}
       </LayoutGroup>
       <div className="sidebar__spacer" />
-      <Assistant />
-      <div className="mini-status" data-hint="Коротко о подключении: работает или нет и через какой сервер. Подробности — на «Главной».">
+      {!mobile && <Assistant />}
+      {!mobile && <div className="mini-status" data-hint="Коротко о подключении: работает или нет и через какой сервер. Подробности — на «Главной».">
         <span className="mini-status__dot" />
         <div className="mini-status__text">
           <div className="mini-status__title">{STATUS_TITLE[status]}</div>
           <div className="mini-status__sub">{server ? server.name : 'Сервер не выбран'}</div>
         </div>
-      </div>
+      </div>}
     </nav>
   )
 }

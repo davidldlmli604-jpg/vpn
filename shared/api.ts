@@ -17,6 +17,8 @@ export interface VpnApi {
   // ключи и серверы
   pasteKey(): Promise<AddResult>
   addKeyText(text: string): Promise<AddResult>
+  /** Только на телефоне: навести камеру на QR-код ключа. */
+  scanQr?(): Promise<AddResult>
   selectServer(id: string): Promise<void>
   renameServer(id: string, name: string): Promise<void>
   removeServer(id: string): Promise<void>

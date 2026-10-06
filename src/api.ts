@@ -7,6 +7,10 @@ export async function loadApi(): Promise<VpnApi> {
   if (cached) return cached
   if (window.vpn) {
     cached = window.vpn
+  } else if (import.meta.env.MODE === 'android') {
+    // Android-версия: те же экраны, свои «внутренности» (src/mobile)
+    const { createMobileApi } = await import('./mobile/controller')
+    cached = await createMobileApi()
   } else if (import.meta.env.MODE === 'mock') {
     const { createMockApi } = await import('./dev/mockApi')
     cached = createMockApi()

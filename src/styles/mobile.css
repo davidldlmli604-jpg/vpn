@@ -1,0 +1,42 @@
+/* Раскладка для телефона (Android). Цвета, шрифты и все компоненты — общие с Windows (theme.css, components.css):
+   здесь только то, что зависит от размера экрана и пальца. Меняете оформление — меняются обе версии. */
+[data-platform='android'] body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+[data-platform='android'] .app {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: 100dvh;
+}
+[data-platform='android'] .main { grid-row: 1; padding: calc(env(safe-area-inset-top, 0px) + 14px) 16px 18px; }
+/* разделы — внизу, под большим пальцем */
+[data-platform='android'] .sidebar {
+  grid-row: 2; flex-direction: row; gap: 8px; padding: 8px 12px calc(env(safe-area-inset-bottom, 0px) + 8px);
+  background: color-mix(in srgb, var(--bg1) 92%, transparent); border-top: 1px solid var(--border);
+}
+[data-platform='android'] .sidebar__spacer { display: none; }
+[data-platform='android'] .nav { flex: 1; flex-direction: column; gap: 4px; padding: 9px 6px; min-height: 56px; justify-content: center; text-align: center; font-size: 12.5px; }
+[data-platform='android'] .nav:hover { transform: none; }
+[data-platform='android'] .nav__pill::before { display: none; }
+
+/* главная: всё в одну колонку, кнопка — в зоне большого пальца */
+[data-platform='android'] .home { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+[data-platform='android'] .hero { gap: 10px; }
+[data-platform='android'] .hero__title { font-size: 26px; }
+[data-platform='android'] .power { --size: min(64vw, 250px); }
+[data-platform='android'] .hero__particles { width: 100%; height: 360px; top: 70px; }
+[data-platform='android'] .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+[data-platform='android'] .page__title { font-size: 24px; }
+
+.addkey { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; }
+.addkey__btn { min-height: 52px; border: 1px solid var(--border); background: var(--surface); }
+
+/* всплывающие сообщения — над нижней панелью, во всю ширину */
+[data-platform='android'] .toasts { left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 84px); align-items: stretch; }
+[data-platform='android'] .toast { min-width: 0; max-width: none; }
+/* настройки: переключатель не уезжает под длинный текст */
+[data-platform='android'] .card { padding-inline: 14px; }
+/* строка настройки: текст сверху, широкий выбор (несколько кнопок) — под ним; переключатель остаётся справа */
+[data-platform='android'] .setting { flex-wrap: wrap; row-gap: 10px; }
+[data-platform='android'] .setting__text { flex: 1 1 210px; }
+[data-platform='android'] .palettes { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+[data-platform='android'] .palette { padding: 8px; }
+[data-platform='android'] .palette__desc { display: none; }

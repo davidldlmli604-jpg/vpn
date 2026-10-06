@@ -51,6 +51,14 @@ export function Home(): ReactElement {
   const last = history[history.length - 1]
   const noServers = servers.length === 0
   const [askAdmin, setAskAdmin] = useState(false)
+  // Телефон: режим один (весь трафик через VPN), ключ — из буфера обмена или QR-кодом камерой
+  const mobile = app.system.platform === 'android'
+  const addKey = async (how: 'paste' | 'scan'): Promise<void> => {
+    const api = vpn()
+    const r = how === 'scan' && api.scanQr ? await api.scanQr() : await api.pasteKey()
+    if (!r.ok && r.message === 'Сканирование отменено.') return
+    pushToast({ kind: r.ok ? 'success' : 'error', text: r.message })
+  }
 
   const onPower = async (): Promise<void> => {
     if (noServers && status === 'off') {
@@ -111,6 +119,16 @@ export function Home(): ReactElement {
             <span>Защита держит интернет закрытым, пока VPN не вернётся. Нужен интернет без VPN — «Защита» → «Починить интернет».</span>
           </div>
         )}
+        {mobile ? (
+          <div className="addkey">
+            <button className="btn btn--ghost addkey__btn" data-hint="Скопируйте ключ, который вам прислали (долгое нажатие на текст → «Копировать»), и нажмите сюда — я возьму его из буфера обмена." onClick={() => void addKey('paste')}>
+              <Icon name="download" size={18} /> Вставить ключ
+            </button>
+            <button className="btn btn--ghost addkey__btn" data-hint="Ключ в виде QR-кода (на экране компьютера или на картинке)? Нажмите и наведите камеру на код." onClick={() => void addKey('scan')}>
+              <Icon name="qr" size={18} /> Сканировать QR
+            </button>
+          </div>
+        ) : (
         <div className="mode">
           <Segmented
             label="Режим работы"
@@ -127,11 +145,12 @@ export function Home(): ReactElement {
           />
           <p className="mode__hint">{MODE_HINT[settings.mode]}</p>
         </div>
+        )}
       </div>
 
       <div className="stack">
         {server ? (
-          <div data-hint="Выбранный сервер — через него идёт интернет. Нажмите, чтобы открыть список серверов и выбрать другой." className="glass glass--spot server-hero" onMouseMove={spotlight} onClick={() => setPage('servers')} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setPage('servers')}>
+          <div data-hint="Выбранный сервер — через него идёт интернет. Нажмите, чтобы открыть список серверов и выбрать другой." className="glass glass--spot server-hero" onMouseMove={spotlight} onClick={() => !mobile && setPage('servers')} role={mobile ? undefined : 'button'} tabIndex={mobile ? undefined : 0} onKeyDown={(e) => !mobile && e.key === 'Enter' && setPage('servers')}>
             <Flag code={server.countryCode} size={38} />
             <div className="server-hero__text">
               <div className="server-hero__name">{server.name}</div>
@@ -140,14 +159,14 @@ export function Home(): ReactElement {
                 <span className="badge">{protocolLabel(server.protocol)}</span>
               </div>
             </div>
-            <Icon name="chevron" style={{ color: 'var(--faint)' }} />
+            {!mobile && <Icon name="chevron" style={{ color: 'var(--faint)' }} />}
           </div>
         ) : (
           <div className="glass server-hero" style={{ cursor: 'default' }}>
             <Flag code={null} size={38} />
             <div className="server-hero__text">
               <div className="server-hero__name">Сервер не выбран</div>
-              <div className="server-hero__meta">Добавьте ключ на вкладке «Серверы»</div>
+              <div className="server-hero__meta">{mobile ? 'Вставьте ключ или отсканируйте QR-код' : 'Добавьте ключ на вкладке «Серверы»'}</div>
             </div>
           </div>
         )}
@@ -215,7 +234,7 @@ export function Home(): ReactElement {
           </div>
         </div>
 
-        {status === 'on' && !conn.degraded && <CheckCard report={check} />}
+        {status === 'on' && !conn.degraded && !mobile && <CheckCard report={check} />}
       </div>
       <AdminModal open={askAdmin} onClose={() => setAskAdmin(false)} />
     </div>

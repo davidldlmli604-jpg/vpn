@@ -39,6 +39,8 @@ function useRootAttributes(): void {
     return undefined
   }, [settings?.theme, settings?.palette, settings?.motion])
   useEffect(() => { document.documentElement.dataset.state = status }, [status])
+  const platform = useApp((s) => s.app?.system.platform)
+  useEffect(() => { if (platform) document.documentElement.dataset.platform = platform }, [platform])
 }
 
 /** Ctrl+V в любом месте окна: вставленный ключ или ссылка на подписку добавляется так же, как по кнопке. */
@@ -76,7 +78,7 @@ export function App(): ReactElement {
   return (
     <div className="app">
       <Aurora />
-      <TitleBar />
+      {import.meta.env.MODE !== 'android' && <TitleBar />}
       {ready && !wizardDone ? (
         <>
           <Wizard />

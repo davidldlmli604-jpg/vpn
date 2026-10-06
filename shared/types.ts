@@ -134,7 +134,7 @@ export interface UpdateInfo {
 }
 
 export interface SystemInfo {
-  platform: 'win32' | 'linux' | 'darwin'
+  platform: 'win32' | 'linux' | 'darwin' | 'android'
   appVersion: string
   isAdmin: boolean
   /** Задача планировщика для запуска без вопросов уже создана. */

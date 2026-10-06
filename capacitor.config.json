@@ -1,0 +1,10 @@
+{
+  "appId": "app.tropa.vpn",
+  "appName": "Тропа",
+  "webDir": "dist-mobile",
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  }
+}

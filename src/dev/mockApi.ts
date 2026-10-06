@@ -51,7 +51,7 @@ export function createMockApi(): VpnApi {
     check: null,
     settings,
     system: {
-      platform: 'win32', appVersion: '0.1.0', isAdmin: false, elevationReady: false,
+      platform: q.get('platform') === 'android' ? 'android' : 'win32', appVersion: '0.1.0', isAdmin: false, elevationReady: false,
       singbox: { found: true, version: '1.14.2', path: 'engine/sing-box.exe' }, secureStorage: true,
       rules: { updatedAt: null, count: 31, updating: false, bundledOnly: true }, startedHidden: false, killSwitchActive: false,
       update: { status: q.get('update') === 'ready' ? 'ready' : 'latest', version: q.get('update') === 'ready' ? '0.2.5' : null, percent: q.get('update') === 'ready' ? 100 : 0, error: null, checkedAt: Date.now() - 40 * 60_000 }
