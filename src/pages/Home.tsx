@@ -92,7 +92,7 @@ export function Home(): ReactElement {
         <Particles status={status} />
         <div className="hero__status" aria-live="polite">
           <AnimatePresence mode="wait" initial={false}>
-            <motion.div key={title + status} initial={{ opacity: 0, y: 10, filter: 'blur(6px)' }} animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }} exit={{ opacity: 0, y: -8, filter: 'blur(4px)' }} transition={{ duration: 0.28 }}>
+            <motion.div key={title + status} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.28 }}>
               <h1 className="hero__title" style={status === 'on' && !conn.degraded ? { color: 'var(--ok)' } : status === 'error' || conn.degraded ? { color: 'var(--danger)' } : undefined}>
                 {status === 'on' && !conn.degraded && <Icon name="check" size={26} style={{ verticalAlign: -3, marginRight: 8 }} />}
                 {title}

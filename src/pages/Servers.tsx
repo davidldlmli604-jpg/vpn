@@ -44,7 +44,7 @@ function ServerCard({ s, selected, active, subName, onAskDelete, onQr }: { s: Se
       onClick={() => !renaming && void vpn().selectServer(s.id)}
       initial={{ opacity: 0, y: 24, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.88, filter: 'blur(6px)', transition: { duration: 0.25 } }}
+      exit={{ opacity: 0, scale: 0.88, transition: { duration: 0.25 } }}
       transition={{ type: 'spring', stiffness: 340, damping: 30 }}
     >
       {selected && (

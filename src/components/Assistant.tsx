@@ -111,11 +111,19 @@ export function Assistant(): ReactElement | null {
   useEffect(() => {
     if (!enabled || motion$ === 'off') return
     let raf = 0
+    let seen = -1
+    let seenTarget: Element | null = null
+    let settled = false
     const frame = (): void => {
       raf = requestAnimationFrame(frame)
       const svg = svgRef.current
       const wrap = wrapRef.current
       if (!svg || !wrap || document.hidden) return
+      // мышь давно не двигалась и взгляд уже на месте — кадр пропускаем, не измеряя страницу
+      const moved = pointer.current.last !== seen
+      if (!moved && settled && target.current === seenTarget) return
+      seen = pointer.current.last
+      seenTarget = target.current
       const r = wrap.getBoundingClientRect()
       const cx = r.left + r.width / 2
       const cy = r.top + r.height * 0.4
@@ -132,8 +140,13 @@ export function Assistant(): ReactElement | null {
         gx = Math.tanh((tx - cx) / 220)
         gy = Math.tanh((ty - cy) / 260)
       }
-      gaze.current.x += (gx - gaze.current.x) * 0.16
-      gaze.current.y += (gy - gaze.current.y) * 0.16
+      const dx = (gx - gaze.current.x) * 0.16
+      const dy = (gy - gaze.current.y) * 0.16
+      // взгляд уже на месте — не трогаем стили, иначе браузер пересчитывает собаку каждый кадр впустую
+      settled = Math.abs(dx) < 0.0005 && Math.abs(dy) < 0.0005
+      if (settled) return
+      gaze.current.x += dx
+      gaze.current.y += dy
       svg.style.setProperty('--gx', gaze.current.x.toFixed(3))
       svg.style.setProperty('--gy', gaze.current.y.toFixed(3))
     }

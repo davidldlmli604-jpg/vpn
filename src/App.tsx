@@ -12,9 +12,10 @@ import { Settings } from './pages/Settings'
 import { useApp, vpn } from './store'
 
 const pageVariants = {
-  initial: { opacity: 0, y: 18, filter: 'blur(8px)' },
-  animate: { opacity: 1, y: 0, filter: 'blur(0px)', transition: { duration: 0.38, ease: [0.22, 1, 0.36, 1] as const } },
-  exit: { opacity: 0, y: -12, filter: 'blur(6px)', transition: { duration: 0.2 } }
+  // только прозрачность и сдвиг: их видеокарта считает почти даром (размытие пересчитывало всю страницу каждый кадр)
+  initial: { opacity: 0, y: 10 },
+  animate: { opacity: 1, y: 0, transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const } },
+  exit: { opacity: 0, y: -6, transition: { duration: 0.12 } }
 }
 
 /** Переносит оформление и состояние подключения в атрибуты корневого элемента — по ним работает весь CSS. */

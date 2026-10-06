@@ -84,7 +84,7 @@ export function Wizard(): ReactElement {
         <div className="wizard__stage">
           <AnimatePresence mode="wait" initial={false} custom={dir}>
             {step === 1 && (
-              <motion.section key="s1" className="wizard__step" custom={dir} initial={{ opacity: 0, x: 40 * dir, filter: 'blur(6px)' }} animate={{ opacity: 1, x: 0, filter: 'blur(0px)' }} exit={{ opacity: 0, x: -40 * dir, filter: 'blur(6px)' }} transition={{ duration: 0.28 }}>
+              <motion.section key="s1" className="wizard__step" custom={dir} initial={{ opacity: 0, x: 40 * dir }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -40 * dir }} transition={{ duration: 0.28 }}>
                 <h1 className="wizard__title">Добавьте ключ</h1>
                 <p className="wizard__text">Ключ вам прислал поставщик VPN. Это длинная строка, которая начинается с <span className="tech">vless://</span>, <span className="tech">vmess://</span>, <span className="tech">trojan://</span>, <span className="tech">ss://</span> и подобного, — или ссылка на подписку (<span className="tech">https://…</span>). <b>Скопируйте её</b> и нажмите кнопку — печатать ничего не нужно.</p>
                 <div className="wizard__actions">
@@ -112,7 +112,7 @@ export function Wizard(): ReactElement {
             )}
 
             {step === 2 && (
-              <motion.section key="s2" className="wizard__step" custom={dir} initial={{ opacity: 0, x: 40 * dir, filter: 'blur(6px)' }} animate={{ opacity: 1, x: 0, filter: 'blur(0px)' }} exit={{ opacity: 0, x: -40 * dir, filter: 'blur(6px)' }} transition={{ duration: 0.28 }}>
+              <motion.section key="s2" className="wizard__step" custom={dir} initial={{ opacity: 0, x: 40 * dir }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -40 * dir }} transition={{ duration: 0.28 }}>
                 <h1 className="wizard__title">Что пускать через VPN?</h1>
                 <p className="wizard__text">Выберите, как пользоваться. Это можно поменять в любой момент одним нажатием на главном экране.</p>
                 <div className="modecards" role="radiogroup" aria-label="Режим работы">
@@ -138,7 +138,7 @@ export function Wizard(): ReactElement {
             )}
 
             {step === 3 && (
-              <motion.section key="s3" className="wizard__step" custom={dir} initial={{ opacity: 0, x: 40 * dir, filter: 'blur(6px)' }} animate={{ opacity: 1, x: 0, filter: 'blur(0px)' }} exit={{ opacity: 0, x: -40 * dir, filter: 'blur(6px)' }} transition={{ duration: 0.28 }}>
+              <motion.section key="s3" className="wizard__step" custom={dir} initial={{ opacity: 0, x: 40 * dir }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -40 * dir }} transition={{ duration: 0.28 }}>
                 <h1 className="wizard__title">{status === 'on' ? 'Всё работает!' : 'Всё готово'}</h1>
                 <p className="wizard__text">
                   {servers.length === 0
