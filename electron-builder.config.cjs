@@ -47,6 +47,7 @@ module.exports = {
 
   // отдельной подписи кода у проекта нет — Windows при первом запуске может показать «неизвестный издатель» (см. ОТЧЁТ.md)
   // Откуда программа берёт обновления: выпуски (Releases) этого хранилища на GitHub. Выкладывает их сборка
-  // на GitHub (.github/workflows/build-windows.yml); при локальной сборке ничего не публикуется.
-  publish: [{ provider: 'github', owner: 'davidldlmli604-jpg', repo: 'vpn', releaseType: 'release' }]
+  // на GitHub (.github/workflows/build-windows.yml): она создаёт черновик, сборщик кладёт в него файлы, затем
+  // черновик публикуется. При локальной сборке ничего не публикуется.
+  publish: [{ provider: 'github', owner: 'davidldlmli604-jpg', repo: 'vpn', releaseType: 'draft' }]
 }

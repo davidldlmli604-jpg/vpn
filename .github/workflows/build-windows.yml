@@ -46,10 +46,26 @@ jobs:
         run: |
           git tag "v$VERSION"
           git push origin "v$VERSION"
-      # проверка типов → сборка → движок (с проверкой SHA-256) → установщик → выпуск на GitHub (с latest.yml для обновления)
+      # Выпуск создаём заранее черновиком: если его создаёт сборщик, при одновременной загрузке нескольких файлов
+      # получаются два выпуска с одной меткой (так вышло с 0.2.4) — и ссылка на установщик даёт 404.
+      - name: Черновик выпуска
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "v$VERSION" --draft --verify-tag --title "$VERSION" --notes "Тропа $VERSION для Windows. Установленная программа обновится сама; вручную — скачайте tropa-setup-$VERSION.exe."
+      # проверка типов → сборка → движок (с проверкой SHA-256) → установщик → файлы в черновик (с latest.yml для обновления)
       - run: npm run dist:publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Опубликовать выпуск
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "v$VERSION" --json assets --jq '.assets[].name' | tee assets.txt
+          grep -qx "tropa-setup-$VERSION.exe" assets.txt
+          grep -qx "latest.yml" assets.txt
+          gh release edit "v$VERSION" --draft=false --latest
       - uses: actions/upload-artifact@v4
         with:
           name: tropa-windows-${{ env.VERSION }}
