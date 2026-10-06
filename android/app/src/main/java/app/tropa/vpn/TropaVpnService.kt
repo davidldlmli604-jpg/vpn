@@ -73,7 +73,7 @@ class TropaVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         if (VpnState.status == "on" || VpnState.status == "connecting") return
         stopping = false
         VpnState.set("connecting")
-        Thread {
+        Thread start@{
             try {
                 NetworkMonitor.start()
                 val server = commandServer ?: CommandServer(this, this).also {
@@ -81,7 +81,7 @@ class TropaVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                     commandServer = it
                 }
                 server.startOrReloadService(config, OverrideOptions())
-                if (stopping) return@Thread
+                if (stopping) return@start
                 Traffic.reset()
                 VpnState.set("on")
                 showNotification(getString(R.string.vpn_on, VpnState.serverName))

@@ -10,6 +10,7 @@ import { RollingNumber } from '../components/RollingNumber'
 import { SpeedChart } from '../components/SpeedChart'
 import { Segmented, spotlight } from '../components/controls'
 import { AdminModal } from '../components/AdminModal'
+import { MobileBuddy } from '../components/MobileBuddy'
 import { countryName, formatDuration, latencyClass, protocolLabel, splitBytes } from '../lib/format'
 import { useApp, vpn } from '../store'
 
@@ -97,6 +98,7 @@ export function Home(): ReactElement {
   return (
     <div className="home" data-state={status}>
       <div className="hero">
+        {mobile && <MobileBuddy status={status} noServers={noServers} />}
         <Particles status={status} />
         <div className="hero__status" aria-live="polite">
           <AnimatePresence mode="wait" initial={false}>
