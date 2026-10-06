@@ -1,0 +1,98 @@
+# Сборка APK для Android. Запускается сама при изменениях в main и в рабочей ветке (и вручную: Actions →
+# «Сборка для Android» → Run workflow). Готовый файл — в разделе Artifacts запуска: tropa-android-0.1.N.
+name: Сборка для Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, claude/brave-pasteur-rsz7b8]
+    paths:
+      - 'android/**'
+      - 'src/**'
+      - 'core/**'
+      - 'shared/**'
+      - 'scripts/build-libbox.sh'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'capacitor.config.json'
+      - 'vite.config.ts'
+      - '.github/workflows/build-android.yml'
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SINGBOX_VERSION: 1.14.2
+
+jobs:
+  apk:
+    name: APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---------- движок sing-box для Android (собирается из исходников; готовый кэшируется по версии)
+      - name: Движок из кэша
+        id: libbox
+        uses: actions/cache@v4
+        with:
+          path: android/app/libs
+          key: libbox-${{ env.SINGBOX_VERSION }}-${{ hashFiles('scripts/build-libbox.sh') }}
+      - if: steps.libbox.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: false
+      - if: steps.libbox.outputs.cache-hit != 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Сборка движка (libbox.aar)
+        if: steps.libbox.outputs.cache-hit != 'true'
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          bash scripts/build-libbox.sh android/app/libs/libbox.aar
+          test -s android/app/libs/libbox.aar
+
+      # ---------- окно (общий интерфейс «Тропы») и само приложение
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build:android
+      - name: Сборка APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease -PtropaVersionCode=${{ github.run_number }} -PtropaVersionName=0.1.${{ github.run_number }}
+
+      # ---------- подпись: ключ лежит в хранилище зашифрованным (android/tropa-release.p12), пароль — секрет GitHub.
+      # Один и тот же ключ у всех версий — поэтому новая ставится поверх старой и ключи серверов не пропадают.
+      - name: Подпись
+        env:
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          VERSION=0.1.${{ github.run_number }}
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          mkdir -p out
+          IN=android/app/build/outputs/apk/release/app-release-unsigned.apk
+          if [ -z "$KS_PASS" ]; then
+            cp "$IN" "out/tropa-$VERSION-НЕ-ПОДПИСАН.apk"
+            echo "::warning::Нет секрета ANDROID_KEYSTORE_PASSWORD — APK не подписан и на телефон не встанет. Как добавить — ОТЧЁТ.md, раздел про Android."
+            exit 0
+          fi
+          "$BT/zipalign" -f -p 4 "$IN" aligned.apk
+          "$BT/apksigner" sign --ks android/tropa-release.p12 --ks-type PKCS12 --ks-pass env:KS_PASS --ks-key-alias tropa --out "out/tropa-$VERSION.apk" aligned.apk
+          "$BT/apksigner" verify --print-certs "out/tropa-$VERSION.apk" | head -3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tropa-android-0.1.${{ github.run_number }}
+          path: out/*.apk
+          if-no-files-found: error

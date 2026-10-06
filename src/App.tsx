@@ -12,9 +12,10 @@ import { Settings } from './pages/Settings'
 import { useApp, vpn } from './store'
 
 const pageVariants = {
-  initial: { opacity: 0, y: 18, filter: 'blur(8px)' },
-  animate: { opacity: 1, y: 0, filter: 'blur(0px)', transition: { duration: 0.38, ease: [0.22, 1, 0.36, 1] as const } },
-  exit: { opacity: 0, y: -12, filter: 'blur(6px)', transition: { duration: 0.2 } }
+  // только прозрачность и сдвиг: их видеокарта считает почти даром (размытие пересчитывало всю страницу каждый кадр)
+  initial: { opacity: 0, y: 10 },
+  animate: { opacity: 1, y: 0, transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const } },
+  exit: { opacity: 0, y: -6, transition: { duration: 0.12 } }
 }
 
 /** Переносит оформление и состояние подключения в атрибуты корневого элемента — по ним работает весь CSS. */
@@ -26,6 +27,7 @@ function useRootAttributes(): void {
     const apply = (): void => {
       const dark = settings?.theme === 'system' ? matchMedia('(prefers-color-scheme: dark)').matches : settings?.theme !== 'light'
       root.dataset.theme = dark ? 'dark' : 'light'
+      if (import.meta.env.MODE === 'android') void import('./mobile/systemBars').then((m) => m.setBarsForTheme(dark))
     }
     apply()
     root.dataset.palette = settings?.palette ?? 'aurora'
@@ -38,6 +40,8 @@ function useRootAttributes(): void {
     return undefined
   }, [settings?.theme, settings?.palette, settings?.motion])
   useEffect(() => { document.documentElement.dataset.state = status }, [status])
+  const platform = useApp((s) => s.app?.system.platform)
+  useEffect(() => { if (platform) document.documentElement.dataset.platform = platform }, [platform])
 }
 
 /** Ctrl+V в любом месте окна: вставленный ключ или ссылка на подписку добавляется так же, как по кнопке. */
@@ -75,7 +79,7 @@ export function App(): ReactElement {
   return (
     <div className="app">
       <Aurora />
-      <TitleBar />
+      {import.meta.env.MODE !== 'android' && <TitleBar />}
       {ready && !wizardDone ? (
         <>
           <Wizard />

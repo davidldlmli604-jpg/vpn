@@ -10,6 +10,7 @@ import { RollingNumber } from '../components/RollingNumber'
 import { SpeedChart } from '../components/SpeedChart'
 import { Segmented, spotlight } from '../components/controls'
 import { AdminModal } from '../components/AdminModal'
+import { MobileBuddy } from '../components/MobileBuddy'
 import { countryName, formatDuration, latencyClass, protocolLabel, splitBytes } from '../lib/format'
 import { useApp, vpn } from '../store'
 
@@ -51,6 +52,14 @@ export function Home(): ReactElement {
   const last = history[history.length - 1]
   const noServers = servers.length === 0
   const [askAdmin, setAskAdmin] = useState(false)
+  // Телефон: режим один (весь трафик через VPN), ключ — из буфера обмена или QR-кодом камерой
+  const mobile = app.system.platform === 'android'
+  const addKey = async (how: 'paste' | 'scan'): Promise<void> => {
+    const api = vpn()
+    const r = how === 'scan' && api.scanQr ? await api.scanQr() : await api.pasteKey()
+    if (!r.ok && r.message === 'Сканирование отменено.') return
+    pushToast({ kind: r.ok ? 'success' : 'error', text: r.message })
+  }
 
   const onPower = async (): Promise<void> => {
     if (noServers && status === 'off') {
@@ -89,10 +98,11 @@ export function Home(): ReactElement {
   return (
     <div className="home" data-state={status}>
       <div className="hero">
+        {mobile && <MobileBuddy status={status} noServers={noServers} />}
         <Particles status={status} />
         <div className="hero__status" aria-live="polite">
           <AnimatePresence mode="wait" initial={false}>
-            <motion.div key={title + status} initial={{ opacity: 0, y: 10, filter: 'blur(6px)' }} animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }} exit={{ opacity: 0, y: -8, filter: 'blur(4px)' }} transition={{ duration: 0.28 }}>
+            <motion.div key={title + status} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.28 }}>
               <h1 className="hero__title" style={status === 'on' && !conn.degraded ? { color: 'var(--ok)' } : status === 'error' || conn.degraded ? { color: 'var(--danger)' } : undefined}>
                 {status === 'on' && !conn.degraded && <Icon name="check" size={26} style={{ verticalAlign: -3, marginRight: 8 }} />}
                 {title}
@@ -111,6 +121,16 @@ export function Home(): ReactElement {
             <span>Защита держит интернет закрытым, пока VPN не вернётся. Нужен интернет без VPN — «Защита» → «Починить интернет».</span>
           </div>
         )}
+        {mobile ? (
+          <div className="addkey">
+            <button className="btn btn--ghost addkey__btn" data-hint="Скопируйте ключ, который вам прислали (долгое нажатие на текст → «Копировать»), и нажмите сюда — я возьму его из буфера обмена." onClick={() => void addKey('paste')}>
+              <Icon name="download" size={18} /> Вставить ключ
+            </button>
+            <button className="btn btn--ghost addkey__btn" data-hint="Ключ в виде QR-кода (на экране компьютера или на картинке)? Нажмите и наведите камеру на код." onClick={() => void addKey('scan')}>
+              <Icon name="qr" size={18} /> Сканировать QR
+            </button>
+          </div>
+        ) : (
         <div className="mode">
           <Segmented
             label="Режим работы"
@@ -127,6 +147,7 @@ export function Home(): ReactElement {
           />
           <p className="mode__hint">{MODE_HINT[settings.mode]}</p>
         </div>
+        )}
       </div>
 
       <div className="stack">
@@ -147,7 +168,7 @@ export function Home(): ReactElement {
             <Flag code={null} size={38} />
             <div className="server-hero__text">
               <div className="server-hero__name">Сервер не выбран</div>
-              <div className="server-hero__meta">Добавьте ключ на вкладке «Серверы»</div>
+              <div className="server-hero__meta">{mobile ? 'Вставьте ключ или отсканируйте QR-код' : 'Добавьте ключ на вкладке «Серверы»'}</div>
             </div>
           </div>
         )}
@@ -215,7 +236,7 @@ export function Home(): ReactElement {
           </div>
         </div>
 
-        {status === 'on' && !conn.degraded && <CheckCard report={check} />}
+        {status === 'on' && !conn.degraded && !mobile && <CheckCard report={check} />}
       </div>
       <AdminModal open={askAdmin} onClose={() => setAskAdmin(false)} />
     </div>

@@ -126,3 +126,20 @@ describe('готовый файл sing-box → наш конфиг', () => {
     expectValid(buildSingBoxConfig(opts(imported.servers[0]!, { mode: 'tun' })), 'imported')
   })
 })
+
+describe('Android: настройки для телефона', () => {
+  it('для каждого ключа: туннель без имени, без открытых локальных портов, и sing-box его принимает', () => {
+    for (const [label, key] of Object.entries(GOOD)) {
+      const config = buildSingBoxConfig(opts(server(key), { target: 'android', mode: 'tun', ruleSets: [], tun: { ipv6: true } })) as {
+        inbounds: Array<Record<string, unknown>>
+        experimental?: unknown
+        route: { rules: Array<Record<string, unknown>> }
+      }
+      expect(config.inbounds.map((i) => i.type)).toEqual(['tun'])
+      expect(config.inbounds[0]!.interface_name).toBeUndefined()
+      expect(config.experimental).toBeUndefined()
+      expect(config.route.rules.some((r) => r.action === 'hijack-dns')).toBe(true)
+      expectValid(config, `android: ${label}`)
+    }
+  })
+})

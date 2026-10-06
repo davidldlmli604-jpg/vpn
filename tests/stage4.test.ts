@@ -773,6 +773,20 @@ describe('«Для специалиста»: контроллер', () => {
     await c.shutdown()
   }, 60000)
 
+  it('смена сервера при включённом VPN переподключает на НОВЫЙ сервер (а не на прежний)', async () => {
+    const { c } = make('exp-7')
+    await c.init()
+    await c.addKeyText(`ss://${b64('aes-256-gcm:pw')}@127.0.0.1:${serverPort}#Первый`)
+    await c.addKeyText(`ss://${b64('aes-256-gcm:pw')}@localhost:${serverPort}#Второй`) // тот же сервер под другим адресом
+    const [first, second] = c.getStateSync().servers
+    await c.selectServer(first!.id)
+    await c.connect()
+    expect(c.conn.state.serverId).toBe(first!.id)
+    await c.selectServer(second!.id)
+    await waitFor(() => c.conn.state.status === 'on' && c.conn.state.serverId === second!.id, 20000, 'переподключение на второй сервер')
+    await c.shutdown()
+  }, 60000)
+
   it('смена расширенных настроек при включённом VPN переподключает его (порт новый)', async () => {
     const { c } = make('exp-6')
     await c.init()

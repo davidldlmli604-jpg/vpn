@@ -175,7 +175,15 @@ export class ConnectionManager {
     const attempt = ++this.attemptId
     const stale = (): boolean => attempt !== this.attemptId || this.userStopped
     try {
-      await this.launchEngine(serverId, stale)
+      try {
+        await this.launchEngine(serverId, stale)
+      } catch (e) {
+        // порт успели занять между проверкой и запуском движка (другая программа) — один раз пробуем любой свободный
+        if (!(e instanceof StartError && e.human.code === 'port-busy') || stale()) throw e
+        this.deps.log('Порт локального входа оказался занят — пробую другой')
+        await this.teardownEngine(true)
+        await this.launchEngine(serverId, stale, true)
+      }
       if (stale()) return
       const ok = await this.firstProbe(stale)
       if (stale()) return
@@ -212,7 +220,7 @@ export class ConnectionManager {
     this.deps.onEvent?.({ type: 'failed', error })
   }
 
-  private async launchEngine(serverId: string, stale: () => boolean): Promise<void> {
+  private async launchEngine(serverId: string, stale: () => boolean, anyPort = false): Promise<void> {
     const settings = this.deps.getSettings()
     const secret = this.deps.getSecret(serverId)
     if (!secret) throw new StartError(noServer())
@@ -221,7 +229,7 @@ export class ConnectionManager {
     if (mode === 'tun' && !(await this.deps.isAdmin())) throw new StartError(needAdminHuman())
 
     mkdirSync(this.deps.workDir, { recursive: true })
-    this.mixedPort = await pickPort(settings.advanced.mixedPort)
+    this.mixedPort = anyPort ? await randomFreePort() : await pickPort(settings.advanced.mixedPort)
     const clashPort = await randomFreePort()
     const secretToken = randomBytes(18).toString('hex')
     this.clash = new ClashClient(clashPort, secretToken)

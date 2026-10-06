@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 
 // Окно приложения (то, что видно на экране). Режим «mock» нужен только для
 // того, чтобы смотреть оформление в обычном браузере без Electron.
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   root: resolve(__dirname, 'src'),
   base: './',
   plugins: [react()],
@@ -16,10 +16,12 @@ export default defineConfig({
     }
   },
   build: {
-    outDir: resolve(__dirname, 'dist'),
+    // Android-версия (mode android) собирается в отдельную папку — оттуда её забирает Capacitor
+    outDir: resolve(__dirname, mode === 'android' ? 'dist-mobile' : 'dist'),
     emptyOutDir: true,
-    target: 'chrome130',
+    // WebView на Android 8 обновляется через Google Play, но может быть и старше — берём с запасом
+    target: mode === 'android' ? 'chrome90' : 'chrome130',
     sourcemap: false
   },
   server: { port: 5173, strictPort: true }
-})
+}))

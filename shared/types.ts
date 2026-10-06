@@ -58,6 +58,8 @@ export interface Settings {
   /** Шелти — собака-помощник: следит за курсором и подсказывает, что делает кнопка под мышкой. */
   assistant: boolean
   closeToTray: boolean
+  /** Сама проверять и скачивать новые версии (с GitHub). */
+  autoUpdate: boolean
   wizardDone: boolean
   selectedServerId: string | null
   advanced: AdvancedSettings
@@ -119,8 +121,20 @@ export interface ConnState {
   blocked: boolean
 }
 
+/** Обновление программы: проверка, скачивание, готово к установке. */
+export interface UpdateInfo {
+  /** unsupported — обновления работают только в установленной программе (не в папке разработки и не в переносимой версии). */
+  status: 'unsupported' | 'idle' | 'checking' | 'latest' | 'downloading' | 'ready' | 'error'
+  /** Новая версия (когда нашлась). */
+  version: string | null
+  /** Сколько скачано, 0–100. */
+  percent: number
+  error: string | null
+  checkedAt: number | null
+}
+
 export interface SystemInfo {
-  platform: 'win32' | 'linux' | 'darwin'
+  platform: 'win32' | 'linux' | 'darwin' | 'android'
   appVersion: string
   isAdmin: boolean
   /** Задача планировщика для запуска без вопросов уже создана. */
@@ -131,6 +145,7 @@ export interface SystemInfo {
   /** Приложение запущено «свернутым» (с автозапуском). */
   startedHidden: boolean
   killSwitchActive: boolean
+  update: UpdateInfo
 }
 
 export interface QrResult {

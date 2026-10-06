@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import './styles/theme.css'
 import './styles/base.css'
 import './styles/components.css'
+import './styles/mobile.css'
 import brand from '@brand'
 import { App } from './App'
 

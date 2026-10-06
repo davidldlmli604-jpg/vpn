@@ -29,6 +29,11 @@ export interface BuildOptions {
   dns: { remote?: string; direct?: string; leakProtection: boolean }
   multiplex?: boolean
   logLevel?: 'trace' | 'debug' | 'info' | 'warn' | 'error'
+  /**
+   * Где будет работать движок. На Android туннель создаёт сама система (VpnService), а открытые локальные
+   * порты (вход-прокси, панель статистики) были бы видны любому приложению на телефоне — их там нет.
+   */
+  target?: 'desktop' | 'android'
 }
 
 export const PROXY_TAG = 'proxy'
@@ -97,7 +102,7 @@ export function buildSingBoxConfig(o: BuildOptions): Record<string, unknown> {
 
   // ---------- Правила маршрутизации ----------
   const rules: Rule[] = [{ action: 'sniff' }]
-  if (o.mode === 'tun') rules.push({ protocol: 'dns', action: 'hijack-dns' })
+  if (o.mode === 'tun' || o.target === 'android') rules.push({ protocol: 'dns', action: 'hijack-dns' })
   // домашняя сеть — всегда напрямую
   rules.push(route(DIRECT_TAG, { ip_is_private: true }))
   rules.push(route(DIRECT_TAG, { domain_suffix: LOCAL_SUFFIXES }))
@@ -127,12 +132,13 @@ export function buildSingBoxConfig(o: BuildOptions): Record<string, unknown> {
     .map((s) => ({ type: 'local', tag: s.tag, format: 'binary', path: s.path }))
 
   // ---------- Входящие ----------
+  const android = o.target === 'android'
   const inbounds: Outbound[] = []
-  if (o.mode === 'tun') {
+  if (o.mode === 'tun' || android) {
     inbounds.push({
       type: 'tun',
       tag: 'tun-in',
-      interface_name: o.tun?.interfaceName ?? 'tropa-tun',
+      ...(android ? {} : { interface_name: o.tun?.interfaceName ?? 'tropa-tun' }),
       address: o.tun?.ipv6 ? ['172.19.0.1/30', 'fdfe:dcba:9876::1/126'] : ['172.19.0.1/30'],
       mtu: o.tun?.mtu ?? 9000,
       auto_route: true,
@@ -141,7 +147,7 @@ export function buildSingBoxConfig(o: BuildOptions): Record<string, unknown> {
       route_exclude_address: o.tun?.ipv6 ? PRIVATE_NETS : PRIVATE_NETS_V4
     })
   }
-  inbounds.push({ type: 'mixed', tag: 'mixed-in', listen: '127.0.0.1', listen_port: o.mixedPort })
+  if (!android) inbounds.push({ type: 'mixed', tag: 'mixed-in', listen: '127.0.0.1', listen_port: o.mixedPort })
 
   return {
     log: { level: o.logLevel ?? 'info', timestamp: true },
@@ -155,9 +161,11 @@ export function buildSingBoxConfig(o: BuildOptions): Record<string, unknown> {
       auto_detect_interface: true,
       default_domain_resolver: 'dns-direct'
     },
-    experimental: {
-      clash_api: { external_controller: `127.0.0.1:${o.clashPort}`, secret: o.clashSecret }
-    }
+    ...(android ? {} : {
+      experimental: {
+        clash_api: { external_controller: `127.0.0.1:${o.clashPort}`, secret: o.clashSecret }
+      }
+    })
   }
 }
 
