@@ -42,7 +42,15 @@ const scenes = [
   { name: 'bypass', q: 'scene=off', page: 'Мимо VPN', wait: 1600, height: 1100 },
   { name: 'bypass-picker', q: 'scene=off', page: 'Мимо VPN', wait: 1400, click: 'Выбрать из запущенных', afterClick: 1200 },
   { name: 'admin-modal', q: 'scene=off', wait: 1200, click: 'Весь компьютер', afterClick: 1200 },
-  { name: 'servers-sunset-light', q: 'scene=on&palette=sunset&theme=light', page: 'Серверы', wait: 1500 }
+  { name: 'servers-sunset-light', q: 'scene=on&palette=sunset&theme=light', page: 'Серверы', wait: 1500 },
+  { name: 'servers-subs', q: 'scene=off&subs=err', page: 'Серверы', wait: 4200, height: 980 },
+  { name: 'servers-testing', q: 'scene=off', page: 'Серверы', wait: 3600, steps: [{ text: 'Проверить задержку' }], afterSteps: 500 },
+  { name: 'qr-warning', q: 'scene=off', page: 'Серверы', wait: 1500, steps: [{ sel: '[aria-label="Действия с подпиской"]' }, { text: 'Показать QR-код' }], afterSteps: 900 },
+  { name: 'qr-shown', q: 'scene=off', page: 'Серверы', wait: 1500, steps: [{ sel: '[aria-label="Действия с подпиской"]' }, { text: 'Показать QR-код' }, { text: 'Показать код' }], afterSteps: 1400 },
+  { name: 'check-running', q: 'scene=check', wait: 4300, height: 1000 },
+  { name: 'check-ok', q: 'scene=check', wait: 7600, height: 1000 },
+  { name: 'check-warn', q: 'scene=check&check=warn&palette=sunset', wait: 7600, height: 1000 },
+  { name: 'check-ok-light', q: 'scene=check&theme=light&palette=forest', wait: 7600, height: 1000 }
 ]
 const only = process.argv.slice(2)
 try {
@@ -59,6 +67,12 @@ for (const s of scenes) {
     await page.getByText(s.click).first().evaluate((el) => (el.closest('button') ?? el).click())
     await page.waitForTimeout(s.afterClick ?? 1000)
   }
+  for (const st of s.steps ?? []) {
+    if (st.sel) await page.locator(st.sel).first().evaluate((el) => el.click())
+    else await page.getByText(st.text).first().evaluate((el) => (el.closest('button') ?? el).click())
+    await page.waitForTimeout(450)
+  }
+  if (s.steps) await page.waitForTimeout(s.afterSteps ?? 800)
   if (s.hover) {
     const b = await page.locator(s.hover).first().boundingBox()
     await page.mouse.move(b.x + b.width / 2 - 20, b.y + b.height / 2 - 20)

@@ -1,5 +1,5 @@
 // Договор между окном и «внутренностями»: что окно может попросить и о чём оно узнаёт.
-import type { AddResult, AppState, RunningApp, Settings, StatsSample } from './types'
+import type { AddResult, AppState, QrResult, RunningApp, Settings, StatsSample } from './types'
 
 export interface ToastMessage {
   id: string
@@ -21,6 +21,23 @@ export interface VpnApi {
   renameServer(id: string, name: string): Promise<void>
   removeServer(id: string): Promise<void>
   toggleFavorite(id: string): Promise<void>
+  /** Проверить задержку серверов (всех, если список не указан). Результаты приходят в состоянии по мере готовности. */
+  pingServers(ids?: string[]): Promise<void>
+
+  // подписки
+  /** Обновить подписку сейчас (список серверов берётся заново; названия и «любимые» сохраняются). */
+  refreshSubscription(id: string): Promise<{ ok: boolean; message: string }>
+  renameSubscription(id: string, name: string): Promise<void>
+  /** Удаляет подписку вместе с её серверами. */
+  removeSubscription(id: string): Promise<void>
+
+  /** QR-код ключа сервера или адреса подписки (по запросу человека; сами ключи на экран не выводятся). */
+  getQr(kind: 'server' | 'subscription', id: string): Promise<QrResult>
+
+  // проверка
+  /** «Проверить, всё ли работает»: ход проверки приходит в состоянии (поле check), итог — в ответе. */
+  runCheck(): Promise<void>
+  clearCheck(): Promise<void>
 
   // подключение
   connect(serverId?: string): Promise<void>
@@ -54,7 +71,7 @@ export const IPC = {
 
 /** Методы, которые разрешено вызывать из окна. Всё остальное «внутренности» отвергают. */
 export const INVOKABLE = [
-  'getState', 'pasteKey', 'addKeyText', 'selectServer', 'renameServer', 'removeServer', 'toggleFavorite',
+  'getState', 'pasteKey', 'addKeyText', 'selectServer', 'renameServer', 'removeServer', 'toggleFavorite', 'pingServers', 'refreshSubscription', 'renameSubscription', 'removeSubscription', 'getQr', 'runCheck', 'clearCheck',
   'connect', 'disconnect', 'requestTunMode', 'revokeElevation', 'listRunningApps', 'listInstalledApps', 'updateRules', 'updateSettings', 'updateAdvanced', 'windowAction', 'quit'
 ] as const
 

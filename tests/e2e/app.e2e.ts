@@ -5,6 +5,7 @@ import { _electron as electron, type ElectronApplication, type Page } from 'play
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { createServer as createHttpServer, type Server as HttpServer } from 'node:http'
 import { Box, freePort, httpViaProxy, removeDir, startTarget, tempDir } from '../helpers/loopback'
 import { UUID } from '../fixtures'
 
@@ -313,6 +314,174 @@ describe('«Мимо VPN» в настоящем окне', () => {
     await expect(httpViaProxy(port, 'http://203.0.113.7:8080/', 1500)).rejects.toBeTruthy() // порт закрыт — движок не остался в фоне
     expect(existsSync(join(userData, 'runtime', 'config.json'))).toBe(false) // файл с секретами удалён
     await launch() // чтобы общий «afterAll» мог закрыть приложение как обычно
+  })
+})
+
+describe('«Серверы»: подписка, задержка, QR-код и проверка в настоящем окне', () => {
+  let web: HttpServer
+  let subUrl = ''
+  let subMode: 'two' | 'three' | '403' = 'two'
+  const press = (selector: string): Promise<void> => win.locator(selector).first().evaluate((el) => (el as HTMLElement).click())
+  const pressText = (text: string): Promise<void> => win.getByText(text, { exact: false }).first().evaluate((el) => ((el.closest('button') ?? el) as HTMLElement).click())
+  const ssKey = (host: string, port: number, name: string): string => `ss://${b64url('aes-256-gcm:e2e-secret-pw')}@${host}:${port}#${encodeURIComponent(name)}`
+
+  beforeAll(async () => {
+    const dead = await freePort() // порт, на котором никого нет
+    const dead2 = await freePort()
+    web = createHttpServer((req, res) => {
+      if (subMode === '403') { res.writeHead(403); res.end('forbidden'); return }
+      const keys = [ssKey('localhost', serverPort, 'Подписка · быстрый'), ssKey('127.0.0.1', dead, 'Подписка · мёртвый')]
+      if (subMode === 'three') keys.push(ssKey('127.0.0.1', dead2, 'Подписка · новый'))
+      res.writeHead(200, { 'subscription-userinfo': 'upload=1073741824; download=3221225472; total=10737418240; expire=1893456000', 'profile-title': 'E2E VPN', 'profile-update-interval': '6' })
+      res.end(Buffer.from(keys.join('\n')).toString('base64'))
+    })
+    await new Promise<void>((r) => web.listen(0, '127.0.0.1', r))
+    subUrl = `http://127.0.0.1:${(web.address() as { port: number }).port}/sub/секретный-токен`
+  })
+  afterAll(async () => { web?.closeAllConnections(); await new Promise<void>((r) => web?.close(() => r())) })
+
+  it('ссылка на подписку из буфера: появляется карточка подписки с остатком трафика и серверы из неё', async () => {
+    await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), subUrl)
+    await win.getByRole('button', { name: 'Серверы' }).first().click({ force: true })
+    await win.waitForSelector('.server')
+    await new Promise((r) => setTimeout(r, 800))
+    await pressText('Вставить ключ или подписку')
+    await win.waitForSelector('.sub', { timeout: 15000 })
+    expect(await win.locator('.sub__name').first().innerText()).toBe('E2E VPN')
+    expect(await win.locator('.sub__usage').first().innerText()).toContain('использовано 4 ГБ из 10 ГБ')
+    await win.waitForFunction(() => document.querySelectorAll('.server').length === 4, null, { timeout: 8000, polling: 200 }) // два прежних (один из них «Сломанный» с прошлых проверок) и два из подписки
+    // секретная часть ссылки на экране не показывается
+    expect(await win.locator('body').innerText()).not.toContain('секретный-токен')
+    await new Promise((r) => setTimeout(r, 900))
+    await shot('real-6-subscription')
+  })
+
+  it('«Проверить задержку»: рабочие серверы получают миллисекунды, мёртвый — «не отвечает»', async () => {
+    // автоматическая проверка при заходе на страницу могла уже идти — дожидаемся тишины, затем запускаем сами
+    await win.waitForFunction(() => document.querySelectorAll('.server .badge .spinner').length === 0, null, { timeout: 30000, polling: 200 })
+    await pressText('Проверить задержку')
+    try {
+      await win.waitForFunction(() => {
+        const cards = Array.from(document.querySelectorAll('.server'))
+        return cards.length === 4 && cards.every((c) => /мс|не отвечает/.test(c.textContent ?? ''))
+      }, null, { timeout: 40000, polling: 300 })
+    } catch (e) {
+      console.log('КАРТОЧКИ', JSON.stringify(await win.locator('.server').allInnerTexts()))
+      throw e
+    }
+    const texts = await win.locator('.server').allInnerTexts()
+    expect(texts.filter((t) => /\d+ мс/.test(t))).toHaveLength(2) // «Нидерланды · тест» и «Подписка · быстрый»
+    expect(texts.filter((t) => t.includes('не отвечает'))).toHaveLength(2) // «Сломанный» и «Подписка · мёртвый»
+    await shot('real-7-latency')
+  })
+
+  it('«Быстрые сверху» меняет порядок: мёртвый сервер уходит вниз', async () => {
+    await pressText('Быстрые сверху')
+    await new Promise((r) => setTimeout(r, 1200))
+    const cards = await win.locator('.server').allInnerTexts()
+    expect(cards[0]).toMatch(/\d+ мс/) // быстрые наверху
+    expect(cards[cards.length - 1]).toContain('не отвечает') // молчащие внизу
+    await pressText('Как добавлены')
+  })
+
+  it('QR-код: сначала предупреждение, ключ показывается только по нажатию, после закрытия не остаётся', async () => {
+    await press('[aria-label="Действия с подпиской"]')
+    await pressText('Показать QR-код')
+    await win.waitForSelector('.modal')
+    expect(await win.locator('.modal').innerText()).toContain('Любой, кто его отсканирует')
+    expect(await win.locator('.qr__img').count()).toBe(0) // код ещё не показан
+    await pressText('Показать код')
+    await win.waitForSelector('.qr__img', { timeout: 10000 })
+    const size = await win.locator('.qr__img').evaluate(async (el) => {
+      const img = el as HTMLImageElement
+      await img.decode()
+      return img.naturalWidth
+    })
+    expect(size).toBeGreaterThan(200)
+    await shot('real-8-qr')
+    await pressText('Закрыть')
+    await win.waitForFunction(() => document.querySelectorAll('.modal').length === 0, null, { timeout: 5000, polling: 200 })
+    expect(await win.locator('.qr__img').count()).toBe(0)
+  })
+
+  it('обновление подписки: новый сервер появляется, а при ошибке сайта серверы остаются и видна понятная пометка', async () => {
+    subMode = 'three'
+    await press('[aria-label="Обновить подписку"]')
+    await win.waitForFunction(() => document.querySelectorAll('.server').length === 5, null, { timeout: 10000, polling: 200 }) // поставщик добавил сервер — он появился сам
+    subMode = '403'
+    await new Promise((r) => setTimeout(r, 500))
+    await press('[aria-label="Обновить подписку"]')
+    await win.waitForSelector('.sub__error', { timeout: 10000 })
+    expect(await win.locator('.sub__error').innerText()).toContain('не пустил')
+    expect(await win.locator('.server').count()).toBe(5) // серверы на месте (вместе с новым)
+    await shot('real-9-sub-error')
+    subMode = 'two'
+    await press('[aria-label="Обновить подписку"]')
+    await win.waitForFunction(() => document.querySelectorAll('.sub__error').length === 0, null, { timeout: 10000, polling: 200 })
+  })
+
+  it('«Проверить, всё ли работает»: шаги идут по очереди, в конце — итог словами', async () => {
+    await win.locator('.server:has-text("быстрый")').evaluate((el) => (el as HTMLElement).click())
+    await win.getByRole('button', { name: 'Главная' }).first().click({ force: true })
+    await win.waitForSelector('.power__face')
+    await new Promise((r) => setTimeout(r, 600))
+    await press('.power__face')
+    await waitStatus('Работает', 30000)
+    await win.waitForSelector('.check', { timeout: 10000 })
+    await pressText('Проверить, всё ли работает')
+    await win.waitForSelector('.check__step', { timeout: 10000 })
+    // внешних сайтов (определение страны, ya.ru) в этой проверке нет, поэтому часть шагов закончится замечанием — это нормально;
+    // главное: ход виден, итог пришёл, а связь с сервером подтверждена
+    await win.waitForSelector('.check__summary', { timeout: 100000 })
+    const steps = await win.locator('.check__step').evaluateAll((els) => els.map((e) => ({ status: e.getAttribute('data-status'), text: (e as HTMLElement).innerText })))
+    expect(steps).toHaveLength(4)
+    expect(steps[0]!.status).toBe('ok')
+    expect(steps.every((x) => ['ok', 'warn', 'fail'].includes(x.status!))).toBe(true)
+    expect((await win.locator('.check__text').innerText()).length).toBeGreaterThan(20)
+    await new Promise((r) => setTimeout(r, 1200))
+    await shot('real-10-check')
+    // закрытие результата
+    await press('[aria-label="Закрыть результат"]')
+    await win.waitForSelector('.check__ask', { timeout: 5000 })
+    await press('.power__face')
+    await waitStatus('Выключено', 15000)
+  })
+
+  it('удаление подписки убирает и её серверы; ручной сервер остаётся', async () => {
+    await win.getByRole('button', { name: 'Серверы' }).first().click({ force: true })
+    await win.waitForSelector('.sub')
+    await new Promise((r) => setTimeout(r, 700))
+    await press('[aria-label="Действия с подпиской"]')
+    await pressText('Удалить')
+    await win.waitForSelector('.modal')
+    await win.locator('.modal .btn--danger').evaluate((el) => (el as HTMLElement).click())
+    await win.waitForFunction(() => document.querySelectorAll('.sub').length === 0, null, { timeout: 8000, polling: 200 })
+    await win.waitForFunction(() => document.querySelectorAll('.server').length === 2, null, { timeout: 8000, polling: 200 }) // остались два «ручных»
+  })
+})
+
+describe('вставка по Ctrl+V', () => {
+  it('нажатие Ctrl+V в окне (не в поле ввода) добавляет скопированный ключ; в поле ввода вставка остаётся обычной', async () => {
+    const before = await win.locator('.server').count()
+    // другой адрес (localhost), чтобы это не был повтор уже добавленного ключа
+    await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), `ss://${b64url('aes-256-gcm:e2e-secret-pw')}@localhost:${serverPort}#${encodeURIComponent('Вставлен по Ctrl+V')}`)
+    await win.locator('.page__title').click({ force: true }) // фокус в окне, но не в поле ввода
+    await win.keyboard.press('Control+V')
+    await win.waitForFunction((n) => document.querySelectorAll('.server').length === n + 1, before, { timeout: 8000, polling: 200 })
+    expect(await win.locator('.server__name').allInnerTexts()).toContain('Вставлен по Ctrl+V')
+    // на странице «Мимо VPN» есть поля ввода: там Ctrl+V вставляет текст в поле и сервер не добавляется
+    await app.evaluate(({ clipboard }) => clipboard.writeText('ss://подделка'))
+    await win.getByRole('button', { name: 'Мимо VPN' }).first().click({ force: true })
+    await win.waitForSelector('.textarea')
+    await new Promise((r) => setTimeout(r, 700))
+    await win.locator('.textarea').first().focus()
+    await win.keyboard.press('Control+V')
+    await new Promise((r) => setTimeout(r, 800))
+    expect(await win.locator('.textarea').first().inputValue()).toContain('ss://подделка') // вставилось в поле, как обычно
+    expect((await win.locator('.toast').allInnerTexts()).join(' ')).not.toContain('не похоже на ключ') // и ключом не сочлось
+    await win.getByRole('button', { name: 'Серверы' }).first().click({ force: true })
+    await win.waitForSelector('.server')
+    expect(await win.locator('.server').count()).toBe(before + 1)
   })
 })
 

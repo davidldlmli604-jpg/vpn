@@ -110,8 +110,12 @@ describe('настройки: каждая даёт валидный конфи�
 
 describe('конфиг для проверки задержки', () => {
   it('все серверы в одном временном конфиге', () => {
-    const outbounds = Object.entries(GOOD).map(([name, key], i) => ({ tag: `p${i}`, outbound: server(key).outbound, name }))
-    expectValid(buildProbeConfig({ outbounds, clashPort: 17892, clashSecret: 's' }), 'probe')
+    const servers = Object.values(GOOD).map((key, i) => ({ tag: `p${i}`, outbound: server(key).outbound, port: 18000 + i }))
+    const cfg = buildProbeConfig({ servers }) as { inbounds: Array<{ tag: string; listen_port: number }>; route: { rules: Array<{ inbound: string[]; outbound: string }> } }
+    expectValid(cfg, 'probe')
+    // у каждого сервера свой вход, и вход привязан строго к своему серверу
+    expect(cfg.inbounds).toHaveLength(servers.length)
+    expect(cfg.route.rules[3]).toMatchObject({ inbound: ['in-p3'], outbound: 'out-p3' })
   })
 })
 

@@ -7,7 +7,7 @@ import { Bypass } from './pages/Bypass'
 import { Home } from './pages/Home'
 import { Servers } from './pages/Servers'
 import { Settings } from './pages/Settings'
-import { useApp } from './store'
+import { useApp, vpn } from './store'
 
 const pageVariants = {
   initial: { opacity: 0, y: 18, filter: 'blur(8px)' },
@@ -38,12 +38,34 @@ function useRootAttributes(): void {
   useEffect(() => { document.documentElement.dataset.state = status }, [status])
 }
 
+/** Ctrl+V в любом месте окна: вставленный ключ или ссылка на подписку добавляется так же, как по кнопке. */
+function usePasteKey(enabled: boolean): void {
+  const pushToast = useApp((s) => s.pushToast)
+  useEffect(() => {
+    if (!enabled) return
+    const onPaste = (e: ClipboardEvent): void => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return // в поле ввода вставка — обычная
+      const text = e.clipboardData?.getData('text') ?? ''
+      if (!text.trim()) return
+      e.preventDefault()
+      void vpn().addKeyText(text).then((r) => {
+        pushToast({ kind: r.ok ? 'success' : 'error', text: r.message })
+        if (r.ok && r.kind === 'servers') void vpn().pingServers()
+      })
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [enabled, pushToast])
+}
+
 export function App(): ReactElement {
   const ready = useApp((s) => s.ready)
   const fatal = useApp((s) => s.fatal)
   const page = useApp((s) => s.page)
   const init = useApp((s) => s.init)
   useRootAttributes()
+  usePasteKey(ready)
   useEffect(() => { void init() }, [init])
 
   if (fatal) return <div style={{ padding: 40 }}>Не удалось запустить окно: {fatal}</div>

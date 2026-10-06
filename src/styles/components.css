@@ -359,3 +359,60 @@
 .picker__name { display: flex; flex-direction: column; flex: 1; min-width: 0; font-weight: 700; line-height: 1.2; }
 .picker__check { width: 22px; height: 22px; border-radius: 7px; border: 1.5px solid var(--border); display: grid; place-items: center; flex: none; transition: all 0.2s var(--ease-spring); color: var(--accent-ink); }
 .picker__check[data-on='true'] { background: linear-gradient(120deg, var(--accent), var(--accent-2)); border-color: transparent; transform: scale(1.1); }
+
+/* ================= Подписки, проверка задержки, QR ================= */
+.toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.toolbar .chip { padding: 6px 13px; font-size: 13px; }
+.server__host { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.server__actions .icon-btn[disabled] { opacity: 0.7; pointer-events: none; }
+
+.subs { display: flex; flex-direction: column; gap: 10px; }
+.sub { display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; overflow: visible; }
+.sub__icon { flex: none; width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; color: var(--accent-ink); background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 8px 22px -8px var(--accent); }
+.sub__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.sub__name { font-weight: 800; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub__meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
+.sub__dot { width: 3px; height: 3px; border-radius: 50%; background: var(--faint); }
+.sub__error { display: flex; align-items: flex-start; gap: 7px; padding: 8px 10px; border-radius: 10px; font-size: 12.5px; line-height: 1.4; color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent); }
+.sub__error svg { flex: none; margin-top: 1px; }
+.sub__usage { display: flex; flex-direction: column; gap: 6px; margin-top: 3px; font-size: 12.5px; color: var(--muted); }
+.sub__actions { display: flex; align-items: center; gap: 2px; flex: none; }
+.meter { height: 7px; border-radius: 99px; background: color-mix(in srgb, var(--muted) 22%, transparent); overflow: hidden; }
+.meter i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); box-shadow: 0 0 12px -2px var(--accent); }
+.meter[data-level='mid'] i { background: linear-gradient(90deg, var(--warn), #ffb24a); box-shadow: 0 0 12px -2px var(--warn); }
+.meter[data-level='high'] i { background: linear-gradient(90deg, var(--danger), #ff8a6a); box-shadow: 0 0 12px -2px var(--danger); }
+
+.qr { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+.qr__frame { padding: 12px; border-radius: 22px; background: #fff; box-shadow: 0 18px 50px -16px var(--accent), 0 0 0 1px rgba(255, 255, 255, 0.5); }
+.qr__img { display: block; width: 240px; height: 240px; image-rendering: pixelated; border-radius: 8px; }
+.qr__name { font-weight: 800; color: var(--text); }
+.qr p { font-size: 13px; max-width: 38ch; }
+
+/* ================= «Проверить, всё ли работает» ================= */
+.check { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.check__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.check__ask { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: space-between; }
+.check__ask p { color: var(--muted); font-size: 13px; max-width: 44ch; }
+.check__steps { display: flex; flex-direction: column; gap: 4px; }
+.check__step { display: flex; gap: 12px; align-items: flex-start; padding: 8px 4px; }
+.check__step + .check__step { border-top: 1px solid var(--border); }
+.check__mark { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; background: var(--surface-2); color: var(--faint); border: 1px solid var(--border); }
+.check__step[data-status='running'] .check__mark { color: var(--accent); border-color: var(--accent); }
+.check__step[data-status='ok'] .check__mark { color: #06210f; background: var(--ok); border-color: transparent; box-shadow: 0 0 16px -3px var(--ok); }
+.check__step[data-status='warn'] .check__mark { color: #2a1b00; background: var(--warn); border-color: transparent; box-shadow: 0 0 16px -3px var(--warn); }
+.check__step[data-status='fail'] .check__mark { color: #fff; background: var(--danger); border-color: transparent; box-shadow: 0 0 16px -3px var(--danger); }
+.check__title { font-weight: 700; font-size: 14px; }
+.check__step[data-status='pending'] .check__title { color: var(--faint); }
+.check__detail { color: var(--muted); font-size: 13px; line-height: 1.4; margin-top: 1px; }
+.check__summary { position: relative; display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; border-radius: var(--r-md); border: 1px solid var(--border); overflow: hidden; }
+.check__summary[data-verdict='ok'] { background: color-mix(in srgb, var(--ok) 13%, transparent); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.check__summary[data-verdict='warn'] { background: color-mix(in srgb, var(--warn) 13%, transparent); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.check__summary[data-verdict='fail'] { background: color-mix(in srgb, var(--danger) 13%, transparent); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+.check__badge { flex: none; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; color: #fff; }
+.check__summary[data-verdict='ok'] .check__badge { background: var(--ok); color: #06210f; box-shadow: 0 0 26px -2px var(--ok); }
+.check__summary[data-verdict='warn'] .check__badge { background: var(--warn); color: #2a1b00; box-shadow: 0 0 26px -2px var(--warn); }
+.check__summary[data-verdict='fail'] .check__badge { background: var(--danger); box-shadow: 0 0 26px -2px var(--danger); }
+.check__text { font-weight: 600; line-height: 1.45; }
+.check__spark { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); pointer-events: none; opacity: 0; animation: spark 1.6s ease-out forwards; }
+@keyframes spark { 0% { transform: translate(0, 0) scale(0.4); opacity: 1; } 100% { transform: translate(var(--dx), var(--dy)) scale(1); opacity: 0; } }
+[data-motion='off'] .check__spark { display: none; }

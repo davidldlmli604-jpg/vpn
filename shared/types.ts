@@ -131,6 +131,15 @@ export interface SystemInfo {
   killSwitchActive: boolean
 }
 
+export interface QrResult {
+  ok: boolean
+  /** Картинка (data URL) — только если ok. */
+  dataUrl?: string
+  /** Что показано: «Ключ сервера …» / «Подписка …» (без секретов). */
+  title?: string
+  message?: string
+}
+
 export interface AppState {
   conn: ConnState
   exit: ExitInfo
@@ -138,6 +147,8 @@ export interface AppState {
   subscriptions: SubscriptionView[]
   settings: Settings
   system: SystemInfo
+  /** Ход и итог кнопки «Проверить, всё ли работает»; null — проверку ещё не запускали. */
+  check: CheckReport | null
 }
 
 export interface StatsSample {

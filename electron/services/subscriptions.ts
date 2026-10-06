@@ -33,7 +33,7 @@ function filenameFromDisposition(v: string | undefined): string | null {
 /** Человеческое объяснение, почему подписку не удалось загрузить. */
 export function subscriptionNetworkError(e: unknown): string {
   if (e instanceof HttpError) {
-    if (e.kind === 'timeout') return 'Сайт подписки не отвечает. Проверьте интернет и попробуйте позже.'
+    if (e.kind === 'timeout') return 'Сайт подписки не отвечает. Проверьте интернет и попробуйте позже. Если сайт у вас заблокирован — включите VPN через другой ключ и повторите.'
     if (e.kind === 'status') {
       if (e.status === 401 || e.status === 403) return 'Сайт подписки не пустил: возможно, ссылка устарела или срок подписки закончился.'
       if (e.status === 404) return 'По этой ссылке ничего нет. Проверьте, что ссылка скопирована целиком.'
@@ -42,7 +42,14 @@ export function subscriptionNetworkError(e: unknown): string {
     if (e.kind === 'too-large') return 'Ответ сайта подписки слишком большой — похоже, это не подписка.'
     if (e.kind === 'bad-url') return 'Адрес подписки записан неверно.'
   }
-  return 'Не удалось связаться с сайтом подписки. Проверьте интернет и ссылку.'
+  return 'Не удалось связаться с сайтом подписки. Проверьте интернет и ссылку. Если сайт у вас заблокирован — включите VPN через другой ключ и повторите.'
+}
+
+/** Пора ли обновлять подписку: по сроку из настроек поставщика; после неудачи не чаще раза в полчаса. */
+export function subscriptionDue(rec: { updatedAt: number | null; intervalHours: number; error: string | null }, now: number, lastTry: number | undefined): boolean {
+  if (lastTry !== undefined && now - lastTry < (rec.error ? 30 : 60) * 60_000) return false
+  if (rec.updatedAt === null) return true
+  return now - rec.updatedAt >= rec.intervalHours * 3_600_000
 }
 
 export async function fetchSubscription(url: string, proxyPort: number | null): Promise<SubscriptionFetch> {

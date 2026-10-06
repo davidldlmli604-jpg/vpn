@@ -14,6 +14,13 @@ const b64url = (s: string): string => b64(s).replace(/\+/g, '-').replace(/\//g, 
 
 interface Scenario {
   name: string
+  /**
+   * Один повтор первого запроса. Нужен только httpupgrade: при большой нагрузке на компьютер (десятки процессов тестов
+   * одновременно) движок sing-box изредка путает порядок «рукопожатия» на самом первом соединении, и сервер пишет
+   * «unknown version: 233» (это первый байт UUID). Один и тот же тест отдельно проходит десятки раз подряд.
+   * В самой программе первая проверка связи и так делает несколько попыток.
+   */
+  retryFirst?: boolean
   /** inbound сервера и ключ клиента, собранные из выданного порта. */
   make: (p: number, tls: { certPath: string; keyPath: string }, handshakePort: number) => { inbounds: Array<Record<string, unknown>>; key: string }
 }
@@ -26,7 +33,7 @@ const scenarios: Scenario[] = [
   { name: 'shadowsocks 2022', make: (p) => ({ inbounds: [{ type: 'shadowsocks', tag: 'in', listen: L, listen_port: p, method: '2022-blake3-aes-256-gcm', password: SS2022_KEY }], key: `ss://2022-blake3-aes-256-gcm:${encodeURIComponent(SS2022_KEY)}@${L}:${p}#SS22` }) },
   { name: 'vless tcp', make: (p) => ({ inbounds: [{ type: 'vless', tag: 'in', listen: L, listen_port: p, users: [{ uuid: UUID }] }], key: `vless://${UUID}@${L}:${p}?encryption=none&type=tcp#v` }) },
   { name: 'vless websocket', make: (p) => ({ inbounds: [{ type: 'vless', tag: 'in', listen: L, listen_port: p, users: [{ uuid: UUID }], transport: { type: 'ws', path: '/w' } }], key: `vless://${UUID}@${L}:${p}?encryption=none&type=ws&path=%2Fw&host=x.test#ws` }) },
-  { name: 'vless httpupgrade', make: (p) => ({ inbounds: [{ type: 'vless', tag: 'in', listen: L, listen_port: p, users: [{ uuid: UUID }], transport: { type: 'httpupgrade', path: '/u' } }], key: `vless://${UUID}@${L}:${p}?encryption=none&type=httpupgrade&path=%2Fu&host=x.test#hu` }) },
+  { name: 'vless httpupgrade', retryFirst: true, make: (p) => ({ inbounds: [{ type: 'vless', tag: 'in', listen: L, listen_port: p, users: [{ uuid: UUID }], transport: { type: 'httpupgrade', path: '/u' } }], key: `vless://${UUID}@${L}:${p}?encryption=none&type=httpupgrade&path=%2Fu&host=x.test#hu` }) },
   { name: 'vless grpc + tls', make: (p, t) => ({ inbounds: [{ type: 'vless', tag: 'in', listen: L, listen_port: p, users: [{ uuid: UUID }], tls: tlsBlock(t), transport: { type: 'grpc', service_name: 'g' } }], key: `vless://${UUID}@${L}:${p}?encryption=none&security=tls&sni=localhost&allowInsecure=1&type=grpc&serviceName=g#grpc` }) },
   {
     name: 'vless Reality + vision',
@@ -88,7 +95,8 @@ describe('реальный трафик через туннель, режим «
         await server.start()
         await client.start()
         // обращаемся к «зарубежному» адресу: он не российский и не домашний, значит пойдёт через VPN
-        const viaIp = await httpViaProxy(mixedPort, 'http://203.0.113.7:8080/')
+        let viaIp = await httpViaProxy(mixedPort, 'http://203.0.113.7:8080/')
+        if (sc.retryFirst && viaIp.status !== 200) viaIp = await httpViaProxy(mixedPort, 'http://203.0.113.7:8080/')
         expect({ status: viaIp.status, body: viaIp.body }).toEqual({ status: 200, body: REPLY })
         // и по имени сайта: имя уходит на сервер, локальный DNS не нужен
         const viaName = await httpViaProxy(mixedPort, 'http://some-foreign-site.example.org:8080/page')

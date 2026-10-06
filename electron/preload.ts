@@ -25,6 +25,14 @@ const api: VpnApi = {
   renameServer: (id, name) => call('renameServer', id, name),
   removeServer: (id) => call('removeServer', id),
   toggleFavorite: (id) => call('toggleFavorite', id),
+  pingServers: (ids) => call('pingServers', ids),
+
+  refreshSubscription: (id) => call('refreshSubscription', id),
+  renameSubscription: (id, name) => call('renameSubscription', id, name),
+  removeSubscription: (id) => call('removeSubscription', id),
+  getQr: (kind, id) => call('getQr', kind, id),
+  runCheck: () => call('runCheck'),
+  clearCheck: () => call('clearCheck'),
 
   connect: (serverId) => call('connect', serverId),
   disconnect: () => call('disconnect'),

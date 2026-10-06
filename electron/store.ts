@@ -30,6 +30,12 @@ export interface ServerRecord {
   fingerprint: string
   warnings: string[]
   addedAt: number
+  /** Название, как его дал поставщик (нужно, чтобы узнавать сервер, когда у него сменились ключи). */
+  origName?: string
+  /** Человек сам переименовал сервер: подписка его название больше не трогает. */
+  nameEdited?: boolean
+  /** Есть ли исходная ссылка (для QR-кода) — чтобы не расшифровывать каждый ключ при каждой перерисовке. */
+  hasLink?: boolean
 }
 
 export interface SubscriptionRecord {
@@ -42,6 +48,10 @@ export interface SubscriptionRecord {
   info: SubscriptionInfo | null
   error: string | null
   intervalHours: number
+  /** Человек сам назвал подписку: название от поставщика больше не подставляется. */
+  nameEdited?: boolean
+  /** Серверы, которые человек удалил из подписки: при обновлении они не возвращаются. */
+  ignored?: string[]
 }
 
 interface Persisted {
@@ -63,6 +73,11 @@ export class SecureStorageError extends Error {
 export function fingerprintOf(outbound: Outbound): string {
   const stable = JSON.stringify(outbound, Object.keys(outbound).sort())
   return createHash('sha256').update(stable).digest('hex').slice(0, 20)
+}
+
+/** «Тип + адрес + порт + название от поставщика»: по этому признаку узнаём сервер подписки, когда у него сменились секреты. */
+export function serverKey(r: { protocol: string; host: string; port: number; origName?: string; name: string }): string {
+  return `${r.protocol}|${r.host.toLowerCase()}|${r.port}|${r.origName ?? r.name}`
 }
 
 export function newId(): string {
@@ -201,7 +216,9 @@ export class DataStore {
         sealed: this.sealer.seal(JSON.stringify({ outbound: p.outbound, rawLink: p.rawLink ?? null })),
         fingerprint: fp,
         warnings: p.warnings,
-        addedAt: Date.now()
+        addedAt: Date.now(),
+        origName: p.name,
+        hasLink: !!p.rawLink
       }
       this.data.servers.push(rec)
       added.push(rec)
@@ -234,6 +251,7 @@ export class DataStore {
     const clean = name.trim().slice(0, 80)
     if (!rec || !clean) return
     rec.name = clean
+    rec.nameEdited = true
     this.save()
   }
 
@@ -244,7 +262,13 @@ export class DataStore {
     this.save()
   }
 
-  removeServer(id: string): void {
+  removeServer(id: string, forget = true): void {
+    const rec = this.server(id)
+    const sub = rec?.subscriptionId ? this.subscription(rec.subscriptionId) : null
+    // сервер, удалённый человеком из подписки, не должен возвращаться при её обновлении
+    if (rec && sub && forget) {
+      sub.ignored = [...(sub.ignored ?? []), `fp:${rec.fingerprint}`, `k:${serverKey(rec)}`].slice(-1000)
+    }
     this.data.servers = this.data.servers.filter((s) => s.id !== id)
     this.latency.delete(id)
     if (this.data.settings.selectedServerId === id) this.data.settings.selectedServerId = null
@@ -275,6 +299,7 @@ export class DataStore {
   }
 
   private hasRawLink(s: ServerRecord): boolean {
+    if (typeof s.hasLink === 'boolean') return s.hasLink
     try {
       const o = JSON.parse(this.sealer.open(s.sealed)) as { rawLink: string | null }
       return !!o.rawLink
@@ -316,45 +341,117 @@ export class DataStore {
     try { return this.sealer.open(s.sealedUrl) } catch { return null }
   }
 
-  removeSubscription(id: string, withServers: boolean): void {
+  removeSubscription(id: string, withServers = true): void {
+    const ids = this.data.servers.filter((s) => s.subscriptionId === id).map((s) => s.id)
     this.data.subscriptions = this.data.subscriptions.filter((s) => s.id !== id)
-    if (withServers) {
-      const ids = this.data.servers.filter((s) => s.subscriptionId === id).map((s) => s.id)
-      for (const sid of ids) this.removeServer(sid)
-    } else {
-      for (const s of this.data.servers) if (s.subscriptionId === id) s.subscriptionId = null
+    if (withServers) for (const sid of ids) this.removeServer(sid, false)
+    else for (const s of this.data.servers) if (s.subscriptionId === id) s.subscriptionId = null
+    this.save()
+  }
+
+  renameSubscription(id: string, name: string): void {
+    const rec = this.subscription(id)
+    const clean = name.trim().slice(0, 80)
+    if (!rec || !clean) return
+    rec.name = clean
+    rec.nameEdited = true
+    this.save()
+  }
+
+  /** Итог последнего обновления: успех (error = null) или причина неудачи. */
+  setSubscriptionResult(id: string, patch: { error: string | null; info?: SubscriptionInfo | null; title?: string | null; intervalHours?: number | null }): void {
+    const rec = this.subscription(id)
+    if (!rec) return
+    rec.error = patch.error
+    if (patch.error === null) {
+      rec.updatedAt = Date.now()
+      if (patch.info !== undefined) rec.info = patch.info
+      if (patch.title && !rec.nameEdited) rec.name = patch.title
+      if (patch.intervalHours) rec.intervalHours = patch.intervalHours
     }
     this.save()
   }
 
   /**
-   * Сверка списка серверов подписки с тем, что пришло в этот раз:
-   * новые добавляем, исчезнувшие убираем, у оставшихся сохраняем имя, «любимых» и выбор человека.
+   * Сверка списка серверов подписки с тем, что пришло в этот раз. Что сохраняется: названия, «любимые» и выбор
+   * человека — даже если поставщик сменил у сервера ключи (тогда сервер узнаётся по типу, адресу, порту и названию,
+   * а новые секреты записываются на то же место). Новые серверы добавляются, исчезнувшие убираются.
+   * `keep` — серверы, которые убирать нельзя (например, к ним сейчас подключены).
    */
-  reconcileSubscription(id: string, parsed: ParsedServer[]): { added: number; removed: number; kept: number } {
+  reconcileSubscription(id: string, parsed: ParsedServer[], keep: ReadonlySet<string> = new Set()): { added: number; removed: number; kept: number; updated: number } {
     this.requireSealer()
-    const fps = new Map(parsed.map((p) => [fingerprintOf(p.outbound), p]))
-    const current = this.data.servers.filter((s) => s.subscriptionId === id)
-    let removed = 0
-    for (const rec of current) {
-      if (!fps.has(rec.fingerprint)) {
-        this.removeServer(rec.id)
-        removed++
+    const sub = this.subscription(id)
+    const ignored = new Set(sub?.ignored ?? [])
+    // повторы внутри самой подписки и серверы, которые человек убрал, отбрасываем
+    const incoming: Array<{ p: ParsedServer; fp: string; key: string; used: boolean }> = []
+    const seen = new Set<string>()
+    for (const p of parsed) {
+      const fp = fingerprintOf(p.outbound)
+      const protocol = p.protocol === 'other' ? String(p.outbound.type ?? 'другое') : p.protocol
+      const key = serverKey({ protocol, host: p.host, port: p.port, origName: p.name, name: p.name })
+      if (seen.has(fp) || ignored.has(`fp:${fp}`) || ignored.has(`k:${key}`)) continue
+      seen.add(fp)
+      incoming.push({ p, fp, key, used: false })
+    }
+    const mine = this.data.servers.filter((s) => s.subscriptionId === id)
+    const claimed = new Map<ServerRecord, (typeof incoming)[number]>()
+
+    const pair = (oldKey: (r: ServerRecord) => string, newKey: (n: (typeof incoming)[number]) => string, mustBeUnique: boolean): void => {
+      const oldLeft = mine.filter((r) => !claimed.has(r))
+      const newLeft = incoming.filter((n) => !n.used)
+      const oldBy = new Map<string, ServerRecord[]>()
+      const newBy = new Map<string, Array<(typeof incoming)[number]>>()
+      for (const r of oldLeft) oldBy.set(oldKey(r), [...(oldBy.get(oldKey(r)) ?? []), r])
+      for (const n of newLeft) newBy.set(newKey(n), [...(newBy.get(newKey(n)) ?? []), n])
+      for (const [k, olds] of oldBy) {
+        const news = newBy.get(k)
+        if (!news) continue
+        if (mustBeUnique && (olds.length !== 1 || news.length !== 1)) continue
+        for (let i = 0; i < Math.min(olds.length, news.length); i++) {
+          claimed.set(olds[i]!, news[i]!)
+          news[i]!.used = true
+        }
       }
     }
-    const have = new Set(current.map((s) => s.fingerprint))
-    const fresh = parsed.filter((p) => !have.has(fingerprintOf(p.outbound)))
+    pair((r) => r.fingerprint, (n) => n.fp, false) // тот же сервер без изменений
+    pair((r) => serverKey(r), (n) => n.key, false) // тот же сервер, но у него сменились ключи
+    pair((r) => `${r.protocol}|${r.host.toLowerCase()}|${r.port}`, (n) => n.key.split('|').slice(0, 3).join('|'), true) // сменилось и название
+
+    let updated = 0
+    for (const [rec, n] of claimed) {
+      const protocol = n.p.protocol === 'other' ? String(n.p.outbound.type ?? 'другое') : n.p.protocol
+      if (rec.fingerprint !== n.fp) {
+        rec.sealed = this.sealer.seal(JSON.stringify({ outbound: n.p.outbound, rawLink: n.p.rawLink ?? null }))
+        rec.fingerprint = n.fp
+        rec.hasLink = !!n.p.rawLink
+        updated++
+      }
+      rec.protocol = protocol
+      rec.host = n.p.host
+      rec.port = n.p.port
+      rec.warnings = n.p.warnings
+      rec.countryCode = n.p.countryHint ?? rec.countryCode
+      if (!rec.nameEdited) rec.name = n.p.name
+      rec.origName = n.p.name
+    }
+
+    let removed = 0
+    for (const rec of mine) {
+      if (claimed.has(rec) || keep.has(rec.id)) continue
+      this.removeServer(rec.id, false)
+      removed++
+    }
+    const fresh = incoming.filter((n) => !n.used)
     // сервер мог быть добавлен вручную до подписки — тогда присоединяем его к подписке, а не дублируем
     const adopt: ParsedServer[] = []
-    for (const p of fresh) {
-      const fp = fingerprintOf(p.outbound)
-      const manual = this.data.servers.find((s) => s.fingerprint === fp)
+    for (const n of fresh) {
+      const manual = this.data.servers.find((s) => s.fingerprint === n.fp && s.subscriptionId === null)
       if (manual) manual.subscriptionId = id
-      else adopt.push(p)
+      else adopt.push(n.p)
     }
     const { added } = this.addServers(adopt, id)
     this.save()
-    return { added: added.length, removed, kept: current.length - removed }
+    return { added: added.length, removed, kept: claimed.size, updated }
   }
 
   subscriptionViews(refreshing: Set<string>): SubscriptionView[] {

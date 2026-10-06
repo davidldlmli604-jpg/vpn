@@ -2,7 +2,7 @@
 // В настоящем приложении не используется: там окно общается с настоящим движком.
 import type { ToastMessage, VpnApi } from '@shared/api'
 import { DEFAULT_SETTINGS, mergeSettings } from '@shared/defaults'
-import type { AddResult, AppState, RunningApp, ServerView, Settings, StatsSample } from '@shared/types'
+import type { AddResult, AppState, CheckReport, CheckStep, RunningApp, ServerView, Settings, StatsSample, SubscriptionView } from '@shared/types'
 
 const q = new URLSearchParams(location.search)
 
@@ -32,16 +32,22 @@ export function createMockApi(): VpnApi {
   const servers: ServerView[] = empty
     ? []
     : SAMPLE.map(([name, cc, protocol, host], i) => ({
-        id: `s${i + 1}`, name, protocol, host, port: 443, countryCode: cc, favorite: i === 0 || i === 2, subscriptionId: null,
+        id: `s${i + 1}`, name, protocol, host, port: 443, countryCode: cc, favorite: i === 0 || i === 2, subscriptionId: i < 4 && q.get('subs') !== '0' ? 'sub1' : null,
         latency: i === 5 ? { error: 'нет ответа' } : { ms: [38, 61, 74, 142, 233, 0][i]! }, canQr: i !== 3, warnings: [], addedAt: Date.now() - i * 86400000
       }))
   if (!empty) settings = { ...settings, selectedServerId: 's1' }
+
+  const subs: SubscriptionView[] = empty || q.get('subs') === '0' ? [] : [
+    { id: 'sub1', name: 'Быстрый VPN', displayUrl: 'https://sub.fastvpn.example/…', updatedAt: Date.now() - 12 * 60_000, serverCount: 4, info: { upload: 12 * 2 ** 30, download: 122 * 2 ** 30, total: 200 * 2 ** 30, expireAt: Date.now() + 41 * 86400_000 }, error: null, refreshing: false },
+    ...(q.get('subs') === 'err' ? [{ id: 'sub2', name: 'Запасной', displayUrl: 'https://backup.example/…', updatedAt: Date.now() - 3 * 86400_000, serverCount: 0, info: null, error: 'Сайт подписки не отвечает. Проверьте интернет и попробуйте позже. Если сайт у вас заблокирован — включите VPN через другой ключ и повторите.', refreshing: false } as SubscriptionView] : [])
+  ]
 
   let app: AppState = {
     conn: { status: 'off', error: null, serverId: null, since: null, reconnect: null, degraded: false, mode: null },
     exit: { checking: false, countryCode: null, countryName: null, ip: null, error: null },
     servers,
-    subscriptions: [],
+    subscriptions: subs,
+    check: null,
     settings,
     system: {
       platform: 'win32', appVersion: '0.1.0', isAdmin: false, elevationReady: false,
@@ -107,8 +113,28 @@ export function createMockApi(): VpnApi {
     setConn({ status: 'disconnecting' })
     await new Promise((r) => setTimeout(r, 500))
     if (timer) clearInterval(timer)
-    app = { ...app, exit: { checking: false, countryCode: null, countryName: null, ip: null, error: null } }
+    app = { ...app, check: null, exit: { checking: false, countryCode: null, countryName: null, ip: null, error: null } }
     setConn({ status: 'off', since: null, error: null })
+  }
+
+  const STEPS: Array<[CheckStep['id'], string, CheckStep['status'], string]> = [
+    ['server', 'Связь с сервером', 'ok', 'Сервер отвечает за 41 мс.'],
+    ['address', 'Ваш адрес в интернете', 'ok', 'Сайты видят вас из страны: Нидерланды.'],
+    ['dns', 'Поиск адресов сайтов (DNS)', q.get('check') === 'warn' ? 'warn' : 'ok', q.get('check') === 'warn' ? 'Защита от утечки DNS выключена: адреса сайтов ищет ваш интернет-провайдер, и ему видно, какие сайты вы открываете. Включите «Защиту от утечки DNS» в настройках.' : 'Адреса сайтов ищутся через VPN — провайдер не видит, какие сайты вы открываете.'],
+    ['ru-direct', 'Российские сайты напрямую', 'ok', 'Российский сайт открылся напрямую за 23 мс — мимо VPN, как и должно быть.']
+  ]
+  const report = (done: number, finished: boolean): CheckReport => {
+    const steps: CheckStep[] = STEPS.map(([id, title, status, detail], i) => (i < done ? { id, title, status, detail } : i === done && !finished ? { id, title, status: 'running', detail: '' } : { id, title, status: 'pending', detail: '' }))
+    const warn = steps.find((x) => x.status === 'warn')
+    return { startedAt: Date.now(), finished, steps, verdict: finished ? (warn ? 'warn' : 'ok') : null, summary: finished ? (warn ? `В целом работает, но есть замечание. ${warn.detail}` : 'Всё работает. Интернет идёт через Нидерланды, а российские сайты открываются напрямую — быстро и без лишних входов.') : '' }
+  }
+  async function runCheck(): Promise<void> {
+    if (app.conn.status !== 'on') return
+    for (let i = 0; i <= STEPS.length; i++) {
+      app = { ...app, check: report(i, i === STEPS.length) }
+      emit()
+      if (i < STEPS.length) await new Promise((r) => setTimeout(r, 650))
+    }
   }
 
   const api: VpnApi = {
@@ -130,6 +156,37 @@ export function createMockApi(): VpnApi {
     renameServer: async (id, name) => { app = { ...app, servers: app.servers.map((s) => (s.id === id ? { ...s, name } : s)) }; emit() },
     removeServer: async (id) => { app = { ...app, servers: app.servers.filter((s) => s.id !== id) }; emit() },
     toggleFavorite: async (id) => { app = { ...app, servers: app.servers.map((s) => (s.id === id ? { ...s, favorite: !s.favorite } : s)) }; emit() },
+
+    pingServers: async (ids) => {
+      const targets = app.servers.filter((x) => !ids || ids.includes(x.id))
+      app = { ...app, servers: app.servers.map((x) => (targets.some((t) => t.id === x.id) ? { ...x, latency: 'testing' } : x)) }
+      emit()
+      for (const t of targets) {
+        await new Promise((r) => setTimeout(r, 350 + Math.random() * 500))
+        const bad = t.id === 's6'
+        const ms = [38, 61, 74, 142, 233][Number(t.id.slice(1)) - 1] ?? 90 + Math.round(Math.random() * 120)
+        app = { ...app, servers: app.servers.map((x) => (x.id === t.id ? { ...x, latency: bad ? { error: 'нет ответа' } : { ms } } : x)) }
+        emit()
+      }
+    },
+    refreshSubscription: async (id) => {
+      app = { ...app, subscriptions: app.subscriptions.map((x) => (x.id === id ? { ...x, refreshing: true } : x)) }
+      emit()
+      await new Promise((r) => setTimeout(r, 1300))
+      const fail = id === 'sub2'
+      app = { ...app, subscriptions: app.subscriptions.map((x) => (x.id === id ? { ...x, refreshing: false, updatedAt: fail ? x.updatedAt : Date.now() } : x)) }
+      emit()
+      return fail ? { ok: false, message: 'Сайт подписки не отвечает.' } : { ok: true, message: 'Список серверов актуален: изменений нет.' }
+    },
+    renameSubscription: async (id, name) => { app = { ...app, subscriptions: app.subscriptions.map((x) => (x.id === id ? { ...x, name } : x)) }; emit() },
+    removeSubscription: async (id) => { app = { ...app, subscriptions: app.subscriptions.filter((x) => x.id !== id), servers: app.servers.filter((x) => x.subscriptionId !== id) }; emit() },
+    getQr: async (kind, id) => {
+      const { default: QRCode } = await import('qrcode')
+      const text = kind === 'server' ? `vless://00000000-0000-4000-8000-000000000000@${app.servers.find((x) => x.id === id)?.host ?? 'example.net'}:443?security=reality&sni=example.com#demo` : 'https://sub.fastvpn.example/api/v1/demo-token'
+      return { ok: true, dataUrl: await QRCode.toDataURL(text, { errorCorrectionLevel: 'M', margin: 2, width: 440 }), title: kind === 'server' ? 'Ключ' : 'Подписка' }
+    },
+    runCheck: () => runCheck(),
+    clearCheck: async () => { app = { ...app, check: null }; emit() },
 
     connect: (id) => connect(id),
     disconnect: () => disconnect(),
@@ -168,6 +225,7 @@ export function createMockApi(): VpnApi {
   // сцены для скриншотов: ?scene=on / connecting / error
   const scene = q.get('scene')
   if (scene === 'on') void connect('s1')
+  if (scene === 'check') void connect('s1').then(() => new Promise((r) => setTimeout(r, 400))).then(() => runCheck())
   if (scene === 'connecting') { app = { ...app, conn: { ...app.conn, status: 'connecting', serverId: 's1', mode: settings.mode } } }
   if (scene === 'error') { app = { ...app, conn: { ...app.conn, status: 'error', serverId: 's1', error: { code: 'server-silent', title: 'Сервер не отвечает', text: 'Возможно, ключ устарел или введён с ошибкой. Если ключ точно рабочий, попробуйте другой сервер из списка или повторите позже.' } } } }
   return api

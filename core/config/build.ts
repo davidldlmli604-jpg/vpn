@@ -161,17 +161,30 @@ export function buildSingBoxConfig(o: BuildOptions): Record<string, unknown> {
   }
 }
 
+export interface ProbeServer {
+  /** Короткое имя (например, id сервера): по нему строятся теги входа и выхода. */
+  tag: string
+  outbound: Outbound
+  /** Свободный порт на 127.0.0.1, на котором будет вход именно для этого сервера. */
+  port: number
+}
+
 /**
- * Временный конфиг для проверки задержки: без входящих подключений и маршрутов,
- * только исходящие (по одному на сервер) и управляющий интерфейс.
+ * Временный конфиг для проверки задержки сразу нескольких серверов одним запуском движка:
+ * у каждого сервера свой локальный вход (127.0.0.1:порт), и всё, что в него пришло, уходит строго через этот сервер.
+ * Запрос к такому входу проходит весь путь, как у браузера: шифрование, сервер, интернет.
  */
-export function buildProbeConfig(opts: { outbounds: Array<{ tag: string; outbound: Outbound }>; clashPort: number; clashSecret: string }): Record<string, unknown> {
+export function buildProbeConfig(opts: { servers: ProbeServer[]; logLevel?: 'warn' | 'error' | 'info' }): Record<string, unknown> {
   return {
-    log: { level: 'warn', timestamp: true },
+    log: { level: opts.logLevel ?? 'warn', timestamp: true },
     dns: { servers: [{ type: 'local', tag: 'dns-direct' }], final: 'dns-direct', strategy: 'prefer_ipv4' },
-    inbounds: [],
-    outbounds: [...opts.outbounds.map((x) => ({ ...x.outbound, tag: x.tag })), { type: 'direct', tag: DIRECT_TAG }],
-    route: { rules: [], final: DIRECT_TAG, auto_detect_interface: true, default_domain_resolver: 'dns-direct' },
-    experimental: { clash_api: { external_controller: `127.0.0.1:${opts.clashPort}`, secret: opts.clashSecret } }
+    inbounds: opts.servers.map((s) => ({ type: 'mixed', tag: `in-${s.tag}`, listen: '127.0.0.1', listen_port: s.port })),
+    outbounds: [...opts.servers.map((s) => ({ ...s.outbound, tag: `out-${s.tag}` })), { type: 'direct', tag: DIRECT_TAG }],
+    route: {
+      rules: opts.servers.map((s) => ({ inbound: [`in-${s.tag}`], action: 'route', outbound: `out-${s.tag}` })),
+      final: DIRECT_TAG,
+      auto_detect_interface: true,
+      default_domain_resolver: 'dns-direct'
+    }
   }
 }

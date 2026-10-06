@@ -97,3 +97,15 @@ export function httpViaProxy(proxyPort: number, url: string, timeoutMs = 8000): 
     req.end()
   })
 }
+
+/** «Чёрная дыра»: принимает соединения и молчит — так ведёт себя сервер, который завис. */
+export async function startBlackHole(): Promise<{ port: number; close: () => Promise<void> }> {
+  const sockets = new Set<import('node:net').Socket>()
+  const srv = createNetServer((s) => {
+    sockets.add(s)
+    s.on('error', () => undefined)
+    s.on('close', () => sockets.delete(s))
+  })
+  const port = await new Promise<number>((r) => srv.listen(0, '127.0.0.1', () => r((srv.address() as { port: number }).port)))
+  return { port, close: () => new Promise<void>((r) => { for (const s of sockets) s.destroy(); srv.close(() => r()) }) }
+}

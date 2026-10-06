@@ -115,7 +115,7 @@ describe('хранилище', () => {
     s.toggleFavorite(trojan.id)
     // у поставщика пропал tuic и появился hysteria2
     const r = s.reconcileSubscription(sub.id, servers(GOOD.trojan!, GOOD.hysteria2!))
-    expect(r).toEqual({ added: 1, removed: 1, kept: 1 })
+    expect(r).toEqual({ added: 1, removed: 1, kept: 1, updated: 0 })
     expect(s.servers.map((x) => x.protocol).sort()).toEqual(['hysteria2', 'trojan'])
     const kept = s.server(trojan.id)!
     expect(kept.name).toBe('Мой любимый')

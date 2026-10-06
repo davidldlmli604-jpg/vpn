@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState, type ReactElement } from 'react'
 import type { ConnStatus } from '@shared/types'
+import { CheckCard } from '../components/CheckCard'
 import { Flag } from '../components/Flag'
 import { Icon } from '../components/Icon'
 import { Particles } from '../components/Particles'
@@ -43,10 +44,10 @@ export function Home(): ReactElement {
   const history = useApp((s) => s.history)
   const setPage = useApp((s) => s.setPage)
   const pushToast = useApp((s) => s.pushToast)
-  const { conn, exit, servers, settings } = app
+  const { conn, exit, servers, settings, check } = app
   const status: ConnStatus = conn.status
   const now = useNow(status === 'on')
-  const server = servers.find((s) => s.id === (conn.serverId ?? settings.selectedServerId)) ?? null
+  const server = servers.find((s) => s.id === conn.serverId) ?? servers.find((s) => s.id === settings.selectedServerId) ?? null
   const last = history[history.length - 1]
   const noServers = servers.length === 0
   const [askAdmin, setAskAdmin] = useState(false)
@@ -207,6 +208,8 @@ export function Home(): ReactElement {
             </AnimatePresence>
           </div>
         </div>
+
+        {status === 'on' && !conn.degraded && <CheckCard report={check} />}
       </div>
       <Modal
         open={askAdmin}

@@ -6,14 +6,19 @@ import { join } from 'node:path'
 import { parseInput } from '../core'
 import type { VpnApi, ToastMessage } from '../shared/api'
 import { DEFAULT_SETTINGS } from '../shared/defaults'
-import type { AddResult, AppState, ConnState, ExitInfo, RunningApp, Settings, StatsSample, SystemInfo } from '../shared/types'
+import type { AddResult, AppState, CheckReport, ConnState, ExitInfo, QrResult, RunningApp, Settings, StatsSample, SystemInfo } from '../shared/types'
 import { ConnectionManager, initialConnState, type ConnectionEvent } from './engine/connection'
 import { NoopSystemProxy, WindowsSystemProxy, type SystemProxy } from './platform/systemProxy'
 import { KillSwitch } from './platform/killswitch'
-import { fetchExitInfo } from './services/ipcheck'
+import { countryOfIp, fetchExitInfo } from './services/ipcheck'
+import { newReport, runSelfCheck } from './services/selfcheck'
+import { probeRoute } from './engine/route'
 import { killStaleEngine } from './engine/stale'
+import { ERR_BAD_KEY, ERR_ENGINE, measureLatencies, type LatencyTarget } from './engine/latency'
 import { AppLog } from './services/logger'
 import { RuleSets } from './services/rules'
+import { fetchSubscription as realFetchSubscription, subscriptionDue, type SubscriptionFetch } from './services/subscriptions'
+import QRCode from 'qrcode'
 import { httpGetWithFallback } from './services/http'
 import { DataStore, SecureStorageError, newId, type Sealer } from './store'
 import { cleanApps, findShortcuts, listRunning, startMenuDirs, toRunningApp, type RawApp } from './apps'
@@ -70,13 +75,30 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
   private restarting = false
   private restartTimer: NodeJS.Timeout | null = null
   private quiet = false
+  private probeUrls: string[] | undefined
+  private pingAborts = new Set<AbortController>()
+  private pinging = new Set<string>()
+  private fetchSub: (url: string, proxyPort: number | null) => Promise<SubscriptionFetch>
+  private refreshingSubs = new Set<string>()
+  private lastSubTry = new Map<string, number>()
+  private subTimer: NodeJS.Timeout | null = null
+  private check: CheckReport | null = null
+  private checkToken = 0
+  private runningCheck = 0
+  private fetchExitFn: typeof fetchExitInfo
+  private countryOfFn: typeof countryOfIp
+  private ruCheckUrl: string
 
   private stateListeners: Array<Listener<AppState>> = []
   private statsListeners: Array<Listener<StatsSample>> = []
   private toastListeners: Array<Listener<ToastMessage>> = []
   private navListeners: Array<Listener<string>> = []
 
-  constructor(readonly host: Host, readonly paths: ControllerPaths, sealer: Sealer, overrides: { systemProxy?: SystemProxy; fetchExit?: typeof fetchExitInfo; ruleFetch?: (url: string) => Promise<Buffer> } = {}) {
+  constructor(readonly host: Host, readonly paths: ControllerPaths, sealer: Sealer, overrides: { systemProxy?: SystemProxy; fetchExit?: typeof fetchExitInfo; ruleFetch?: (url: string) => Promise<Buffer>; probeUrls?: string[]; fetchSubscription?: (url: string, proxyPort: number | null) => Promise<SubscriptionFetch>; countryOf?: typeof countryOfIp; ruCheckUrl?: string; configTransform?: (config: Record<string, unknown>) => Record<string, unknown> } = {}) {
+    this.probeUrls = overrides.probeUrls
+    this.fetchSub = overrides.fetchSubscription ?? realFetchSubscription
+    this.countryOfFn = overrides.countryOf ?? countryOfIp
+    this.ruCheckUrl = overrides.ruCheckUrl ?? 'http://ya.ru/'
     this.log = new AppLog(join(paths.userDir, 'logs', 'app.log'))
     this.store = new DataStore(join(paths.userDir, 'data.json'), sealer)
     this.rules = new RuleSets({
@@ -102,6 +124,7 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
 
     this.killSwitch = killSwitch
     const fetchExit = overrides.fetchExit ?? fetchExitInfo
+    this.fetchExitFn = fetchExit
     this.conn = new ConnectionManager({
       engineExe: paths.engineExe,
       workDir: join(paths.userDir, 'runtime'),
@@ -119,6 +142,8 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
       },
       log: (l) => this.log.add(l),
       recordEngine: (pid) => this.store.runtimeSet('enginePid', pid),
+      probeUrls: overrides.probeUrls,
+      configTransform: overrides.configTransform,
       onEvent: (e) => this.onConnectionEvent(e)
     })
     this.conn.onState = (s) => this.onConnState(s)
@@ -142,6 +167,9 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
     const maybeUpdate = (): void => { if (this.rules.needsUpdate()) void this.updateRules(true) }
     setTimeout(maybeUpdate, 25_000)
     this.rulesTimer = setInterval(maybeUpdate, 6 * 3600_000)
+    // подписки обновляются сами по сроку, который задал поставщик (обычно раз в 12 часов); без шума, если всё хорошо
+    setTimeout(() => void this.refreshDueSubscriptions(), 15_000)
+    this.subTimer = setInterval(() => void this.refreshDueSubscriptions(), 10 * 60_000)
   }
 
   // ---------------------------------------------------------------- после аварийного завершения
@@ -225,9 +253,10 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
       conn: this.conn.state,
       exit: this.exit,
       servers: this.store.views(),
-      subscriptions: [],
+      subscriptions: this.store.subscriptionViews(this.refreshingSubs),
       settings: this.store.settings,
-      system: this.system()
+      system: this.system(),
+      check: this.check
     }
   }
 
@@ -246,6 +275,8 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
   }
 
   private onConnState(s: ConnState): void {
+    // результат проверки относится к конкретному подключению: оно закончилось — результат уже ни о чём
+    if (s.status !== 'on' && this.check) { this.check = null; this.checkToken++ }
     if (s.status === 'off' || s.status === 'error') this.exit = { checking: false, countryCode: null, countryName: null, ip: null, error: null }
     if (s.status === 'connecting') this.exit = { checking: false, countryCode: null, countryName: null, ip: null, error: null }
     this.pushState()
@@ -275,9 +306,7 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
     const outcome = parseInput(text)
     const fail = (message: string): AddResult => ({ ok: false, added: 0, kind: 'error', message, skipped: [], firstId: null })
     if (outcome.kind === 'error') return fail(outcome.error.message)
-    if (outcome.kind === 'subscription-url') {
-      return fail('Это ссылка на подписку. Подписки появятся в одном из следующих обновлений.')
-    }
+    if (outcome.kind === 'subscription-url') return this.addSubscriptionUrl(outcome.url)
     try {
       const { added, duplicates } = this.store.addServers(outcome.servers)
       const skipped = outcome.failures.map((f) => `${f.hint}: ${f.error.message}`)
@@ -320,6 +349,247 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
   async toggleFavorite(id: string): Promise<void> {
     this.store.toggleFavorite(id)
     this.pushState()
+  }
+
+  /** Проверка задержки: все серверы, если ids не заданы. Результаты появляются в списке по мере готовности. */
+  async pingServers(ids?: string[]): Promise<void> {
+    const wanted = (ids && ids.length ? ids : this.store.servers.map((s) => s.id)).filter((id) => this.store.server(id) && !this.pinging.has(id))
+    const targets: LatencyTarget[] = []
+    for (const id of wanted) {
+      const secret = this.store.getSecret(id)
+      if (secret) targets.push({ id, outbound: secret.outbound })
+      else this.store.setLatency(id, { error: ERR_BAD_KEY })
+    }
+    if (targets.length === 0) { this.pushState(); return }
+    if (!existsSync(this.paths.engineExe)) {
+      for (const t of targets) this.store.setLatency(t.id, { error: ERR_ENGINE })
+      this.pushState()
+      this.toast('error', 'Не найден движок (sing-box), проверить серверы не получится.')
+      return
+    }
+    for (const t of targets) { this.store.setLatency(t.id, 'testing'); this.pinging.add(t.id) }
+    this.pushState()
+    this.log.add(`Проверка задержки: серверов ${targets.length}`)
+    const ac = new AbortController()
+    this.pingAborts.add(ac)
+    try {
+      await measureLatencies(targets, {
+        engineExe: this.paths.engineExe,
+        workDir: join(this.paths.userDir, 'runtime'),
+        probeUrls: this.probeUrls,
+        signal: ac.signal,
+        log: (l) => this.log.add(l),
+        onResult: (id, r) => {
+          this.store.setLatency(id, r)
+          this.pinging.delete(id)
+          this.pushState()
+        }
+      })
+    } catch (e) {
+      this.log.add(`Проверка задержки не удалась: ${(e as Error).message}`)
+    } finally {
+      this.pingAborts.delete(ac)
+      // тех, до кого очередь не дошла (прервали или сбой), возвращаем в «не проверен»
+      for (const t of targets) {
+        if (this.pinging.delete(t.id)) this.store.setLatency(t.id, null)
+      }
+      this.pushState()
+    }
+  }
+
+  // ---------------------------------------------------------------- подписки
+
+  /** Порт нашего локального прокси, если VPN сейчас работает: через него можно достать сайт подписки, заблокированный у провайдера. */
+  private activeProxyPort(): number | null {
+    return this.conn.state.status === 'on' && this.conn.isRunning ? this.conn.proxyPort : null
+  }
+
+  private async addSubscriptionUrl(url: string): Promise<AddResult> {
+    const fail = (message: string): AddResult => ({ ok: false, added: 0, kind: 'error', message, skipped: [], firstId: null })
+    if (!this.store.secureAvailable) return fail('Не удалось защитить ссылку средствами Windows, поэтому подписка не сохранена. Попробуйте перезапустить программу.')
+    const existing = this.store.subscriptions.find((s) => this.store.openUrl(s) === url)
+    if (existing) {
+      const r = await this.doRefresh(existing.id, false)
+      return { ok: r.ok, added: 0, kind: 'subscription', message: r.ok ? 'Такая подписка уже есть — список серверов обновлён.' : r.message, skipped: [], firstId: null }
+    }
+    this.log.add('Загружаю подписку')
+    const f = await this.fetchSub(url, this.activeProxyPort())
+    if (f.outcome.kind !== 'servers') return fail(f.outcome.kind === 'error' ? f.outcome.error.message : 'Подписка пустая.')
+    try {
+      const sub = this.store.addSubscription(url, f.title ?? '')
+      const r = this.store.reconcileSubscription(sub.id, f.outcome.servers)
+      this.store.setSubscriptionResult(sub.id, { error: null, info: f.info, title: f.title, intervalHours: f.intervalHours })
+      const first = this.store.servers.find((s) => s.subscriptionId === sub.id) ?? null
+      if (first && !this.store.settings.selectedServerId) this.store.updateSettings({ selectedServerId: first.id })
+      const skipped = f.outcome.failures.map((x) => `${x.hint}: ${x.error.message}`)
+      this.log.add(`Подписка добавлена, серверов: ${r.added}`)
+      this.pushState()
+      const name = this.store.subscription(sub.id)?.name ?? 'Подписка'
+      const base = `Подписка «${name}» добавлена: серверов ${r.added}`
+      return { ok: true, added: r.added, kind: 'subscription', message: skipped.length ? `${base}. Не удалось прочитать: ${skipped.length}` : base, skipped, firstId: first?.id ?? null }
+    } catch (e) {
+      if (e instanceof SecureStorageError) return fail('Не удалось защитить ключи средствами Windows, поэтому подписка не сохранена. Попробуйте перезапустить программу.')
+      throw e
+    }
+  }
+
+  private async doRefresh(id: string, silent: boolean): Promise<{ ok: boolean; message: string }> {
+    const rec = this.store.subscription(id)
+    if (!rec) return { ok: false, message: 'Такой подписки нет.' }
+    if (this.refreshingSubs.has(id)) return { ok: true, message: 'Подписка уже обновляется.' }
+    const url = this.store.openUrl(rec)
+    if (!url) return { ok: false, message: 'Не удалось прочитать адрес подписки. Удалите её и добавьте заново.' }
+    this.refreshingSubs.add(id)
+    this.lastSubTry.set(id, Date.now())
+    this.pushState()
+    try {
+      const f = await this.fetchSub(url, this.activeProxyPort())
+      if (f.outcome.kind !== 'servers') {
+        const message = f.outcome.kind === 'error' ? f.outcome.error.message : 'Подписка пустая.'
+        // старые серверы остаются: временный сбой не должен оставлять человека без списка
+        this.store.setSubscriptionResult(id, { error: message })
+        this.log.add('Подписка не обновилась')
+        if (!silent) this.toast('warn', message)
+        return { ok: false, message }
+      }
+      const before = this.store.settings.selectedServerId
+      const beforeRec = before ? this.store.server(before) : null
+      const keep = new Set<string>()
+      if (this.conn.state.serverId && this.conn.state.status !== 'off') keep.add(this.conn.state.serverId)
+      const r = this.store.reconcileSubscription(id, f.outcome.servers, keep)
+      this.store.setSubscriptionResult(id, { error: null, info: f.info, title: f.title, intervalHours: f.intervalHours })
+      // выбранный сервер исчез из подписки — выбираем похожий (тот же адрес, то же название), а не оставляем человека ни с чем
+      if (before && beforeRec?.subscriptionId === id && !this.store.server(before)) {
+        const mine = this.store.servers.filter((s) => s.subscriptionId === id)
+        const next = mine.find((s) => s.host === beforeRec.host && s.port === beforeRec.port) ?? mine.find((s) => (s.origName ?? s.name) === (beforeRec.origName ?? beforeRec.name)) ?? mine[0]
+        if (next) this.store.updateSettings({ selectedServerId: next.id })
+      }
+      this.log.add(`Подписка обновлена: добавлено ${r.added}, убрано ${r.removed}, обновлено ${r.updated}`)
+      const parts = [r.added ? `добавлено ${r.added}` : '', r.removed ? `убрано ${r.removed}` : ''].filter(Boolean)
+      const message = parts.length ? `Список серверов обновлён: ${parts.join(', ')}.` : 'Список серверов актуален: изменений нет.'
+      if (!silent) this.toast('success', message)
+      return { ok: true, message }
+    } finally {
+      this.refreshingSubs.delete(id)
+      this.pushState()
+    }
+  }
+
+  async refreshSubscription(id: string): Promise<{ ok: boolean; message: string }> {
+    return this.doRefresh(id, false)
+  }
+
+  /** Фоновое обновление по сроку. Тихое: человек узнаёт только о проблемах (значок у подписки), а не о каждом обновлении. */
+  async refreshDueSubscriptions(): Promise<void> {
+    for (const rec of [...this.store.subscriptions]) {
+      if (subscriptionDue(rec, Date.now(), this.lastSubTry.get(rec.id))) await this.doRefresh(rec.id, true)
+    }
+  }
+
+  async renameSubscription(id: string, name: string): Promise<void> {
+    this.store.renameSubscription(id, name)
+    this.pushState()
+  }
+
+  async removeSubscription(id: string): Promise<void> {
+    const activeId = this.conn.state.serverId
+    if (activeId && this.conn.state.status !== 'off' && this.store.server(activeId)?.subscriptionId === id) await this.disconnect()
+    this.store.removeSubscription(id, true)
+    this.log.add('Подписка удалена вместе с серверами')
+    this.pushState()
+  }
+
+  // ---------------------------------------------------------------- «Проверить, всё ли работает»
+
+  async runCheck(): Promise<void> {
+    // уже идёт и человек его видит — второй запуск не нужен; если окно проверки закрыли, можно начать заново
+    if (this.runningCheck && this.check) return
+    const clash = this.conn.clashClient
+    if (this.conn.state.status !== 'on' || !clash) {
+      this.check = { ...newReport(), steps: [], finished: true, verdict: 'fail', summary: 'Сначала включите VPN — пока проверять нечего.' }
+      this.pushState()
+      return
+    }
+    const port = this.conn.proxyPort
+    const rec = this.conn.state.serverId ? this.store.server(this.conn.state.serverId) : null
+    const settings = this.store.settings
+    const token = ++this.checkToken
+    this.runningCheck = token
+    this.log.add('Проверка «всё ли работает»: начало')
+    try {
+      const report = await runSelfCheck({
+        mode: this.conn.state.mode,
+        serverName: rec?.name ?? 'сервер',
+        serverCountry: rec?.countryCode ? rec.countryCode.toUpperCase() : null,
+        bypassRu: settings.bypassRu,
+        dnsLeakProtection: settings.dnsLeakProtection,
+        probe: () => this.conn.probeOnce(),
+        fetchExit: () => this.fetchExitFn(port),
+        fetchRealExit: () => this.fetchExitFn(null),
+        dnsResolverIp: async () => {
+          try {
+            // Akamai в ответ называет адрес того, кто его спросил, — так видно, чей DNS-узел искал адрес за нас
+            const r = await clash.dnsQuery('whoami.akamai.net', 'A', 8000)
+            return r.Answer?.find((a) => a.type === 1)?.data ?? null
+          } catch { return null }
+        },
+        countryOf: (ip) => this.countryOfFn(ip, port),
+        ruDirect: async () => {
+          const r = await probeRoute(port, clash, this.ruCheckUrl)
+          return { ms: r.ms, chain: r.chain }
+        },
+        isCancelled: () => token !== this.checkToken || this.conn.state.status !== 'on',
+        onUpdate: (r) => {
+          if (token !== this.checkToken) return
+          this.check = r
+          this.pushState()
+        }
+      })
+      this.log.add(`Проверка «всё ли работает»: ${report.verdict ?? 'прервана'}`)
+    } catch (e) {
+      this.log.add(`Проверка не удалась: ${(e as Error).message}`)
+      if (token === this.checkToken) {
+        this.check = { ...newReport(), steps: [], finished: true, verdict: 'fail', summary: 'Проверка не удалась из-за внутренней ошибки. Попробуйте ещё раз.' }
+        this.pushState()
+      }
+    } finally {
+      if (this.runningCheck === token) this.runningCheck = 0
+    }
+  }
+
+  async clearCheck(): Promise<void> {
+    this.checkToken++
+    this.check = null
+    this.pushState()
+  }
+
+  // ---------------------------------------------------------------- QR-код
+
+  /** QR-код показывается только по просьбе человека. Ключ целиком в журнал не попадает. */
+  async getQr(kind: 'server' | 'subscription', id: string): Promise<QrResult> {
+    let text: string | null = null
+    let title = ''
+    if (kind === 'server') {
+      const rec = this.store.server(id)
+      if (!rec) return { ok: false, message: 'Такого сервера нет.' }
+      text = this.store.getSecret(id)?.rawLink ?? null
+      title = `Ключ «${rec.name}»`
+      if (!text) return { ok: false, message: 'У этого сервера нет исходной ссылки (он добавлен из готового файла настроек), поэтому QR-код сделать нельзя.' }
+    } else {
+      const sub = this.store.subscription(id)
+      if (!sub) return { ok: false, message: 'Такой подписки нет.' }
+      text = this.store.openUrl(sub)
+      title = `Подписка «${sub.name}»`
+      if (!text) return { ok: false, message: 'Не удалось прочитать адрес подписки.' }
+    }
+    if (text.length > 2200) return { ok: false, message: 'Этот ключ слишком длинный, в QR-код он не помещается.' }
+    try {
+      const dataUrl = await QRCode.toDataURL(text, { errorCorrectionLevel: 'M', margin: 2, width: 440, color: { dark: '#0b1020', light: '#ffffff' } })
+      this.log.add(`Показан QR-код (${kind === 'server' ? 'сервер' : 'подписка'})`)
+      return { ok: true, dataUrl, title }
+    } catch {
+      return { ok: false, message: 'Не удалось построить QR-код.' }
+    }
   }
 
   // ---------------------------------------------------------------- подключение
@@ -495,6 +765,8 @@ export class AppController implements Omit<VpnApi, 'onState' | 'onStats' | 'onTo
   async shutdown(): Promise<void> {
     if (this.restartTimer) clearTimeout(this.restartTimer)
     if (this.rulesTimer) clearInterval(this.rulesTimer)
+    if (this.subTimer) clearInterval(this.subTimer)
+    for (const ac of this.pingAborts) ac.abort()
     await this.conn.shutdown()
     this.store.flush()
   }

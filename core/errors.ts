@@ -21,7 +21,8 @@ const TEXTS: Record<KeyErrorCode, string> = {
 }
 
 export function keyError(code: KeyErrorCode, detail?: string, extra?: string): KeyError {
-  const message = extra ? `${TEXTS[code]} ${extra}` : TEXTS[code]
+  // у «серверов не найдено» своё пояснение полностью заменяет общую фразу — иначе получалось бы два предложения подряд об одном и том же
+  const message = extra ? (code === 'no-servers' ? extra : `${TEXTS[code]} ${extra}`) : TEXTS[code]
   return { code, message, ...(detail ? { detail } : {}) }
 }
 

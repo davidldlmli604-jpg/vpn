@@ -24,7 +24,7 @@ npm start
 |---|---|
 | `npm run dev` | окно с живой перезагрузкой |
 | `npm run ui` | только оформление в браузере, с тестовыми данными |
-| `npm test` | 200+ автотестов (нужен sing-box: `npm run fetch:singbox`) |
+| `npm test` | 280+ автотестов (нужен sing-box: `npm run fetch:singbox`) |
 | `npm run test:e2e` | настоящее окно в Electron (под Linux — через `xvfb-run`) |
 | `npm run typecheck` | проверка типов |
 | `npm run screenshots` | снимки окна в разных оформлениях |
